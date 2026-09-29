@@ -20,3 +20,53 @@ body {
     text-wrap: balance;
   }
 }
+
+@keyframes fobc-eq {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes fobc-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.music-eq i {
+  display: block;
+  width: 2px;
+  height: 12px;
+  transform-origin: bottom;
+  border-radius: 999px;
+  background: #eab308;
+}
+
+.music-eq.is-playing i {
+  animation: fobc-eq 0.8s ease-in-out infinite;
+}
+
+.music-eq.is-playing i:nth-child(2) {
+  animation-delay: 0.12s;
+}
+
+.music-eq.is-playing i:nth-child(3) {
+  animation-delay: 0.24s;
+}
+
+.music-eq.is-playing i:nth-child(4) {
+  animation-delay: 0.36s;
+}
+
+.music-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: fobc-marquee 9s linear infinite;
+}

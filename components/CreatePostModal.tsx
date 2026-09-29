@@ -1,19 +1,20 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ImagePlus, MapPin, Music2, UserPlus, X } from "lucide-react";
+import { ImagePlus, MapPin, Music2, Pause, Play, UserPlus, X } from "lucide-react";
 import { createCommunityPost } from "@/lib/feed/api";
 import type { CreateCategory } from "@/lib/feed/types";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 const mediaTypes = ["image/jpeg", "image/png", "image/webp", "image/gif", "video/mp4", "video/webm", "video/quicktime"];
-const audioTypes = ["audio/mpeg", "audio/mp4", "audio/wav", "audio/webm", "audio/aac"];
+const audioTypes = ["audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/webm", "audio/aac", "audio/x-m4a"];
+const audioExtensions = ["mp3", "wav", "m4a"];
 const tracks = [
-  { title: "Way Maker", artist: "Sinach" },
-  { title: "Goodness of God", artist: "Bethel Music" },
-  { title: "Amazing Grace", artist: "Traditional" },
+  { title: "Amazing Grace", artist: "Kevin MacLeod", url: "/music/amazing-grace.mp3" },
+  { title: "Agnus Dei", artist: "Kevin MacLeod", url: "/music/agnus-dei.mp3" },
+  { title: "Thaxted", artist: "Kevin MacLeod", url: "/music/thaxted.mp3" },
 ];
 const places = ["Convention grounds", "Douala", "Yaoundé", "Cameroon"];
 const pills: { label: string; category: CreateCategory; tag: string }[] = [
@@ -31,6 +32,10 @@ export function CreatePostModal() {
   const [tags, setTags] = useState<string[]>(["Testimony"]);
   const [file, setFile] = useState<File | null>(null);
   const [audio, setAudio] = useState<File | null>(null);
+  const [presetUrl, setPresetUrl] = useState("");
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [previewing, setPreviewing] = useState(false);
+  const previewRef = useRef<HTMLAudioElement | null>(null);
   const [songTitle, setSongTitle] = useState("");
   const [songArtist, setSongArtist] = useState("");
   const [location, setLocation] = useState("");
@@ -54,6 +59,32 @@ export function CreatePostModal() {
     return () => window.clearTimeout(timer);
   }, [friendQuery]);
 
+  useEffect(() => {
+    if (!audio) {
+      setPreviewUrl(presetUrl);
+      return;
+    }
+    const url = URL.createObjectURL(audio);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [audio, presetUrl]);
+
+  useEffect(() => {
+    setPreviewing(false);
+    previewRef.current?.pause();
+  }, [previewUrl]);
+
+  function togglePreview() {
+    const player = previewRef.current;
+    if (!player) return;
+    if (player.paused) {
+      player.play().then(() => setPreviewing(true)).catch(() => setPreviewing(false));
+    } else {
+      player.pause();
+      setPreviewing(false);
+    }
+  }
+
   function choosePill(pill: (typeof pills)[number]) {
     setCategory(pill.category);
     setTags([pill.tag]);
@@ -70,9 +101,12 @@ export function CreatePostModal() {
       setError("Use a JPG, PNG, WEBP, GIF, MP4, WEBM, or MOV file.");
       return;
     }
-    if (audio && audio.type && !audioTypes.includes(audio.type)) {
-      setError("Use an MP3, M4A, WAV, or WEBM audio file.");
-      return;
+    if (audio) {
+      const extension = audio.name.split(".").pop()?.toLowerCase() ?? "";
+      if (!audioExtensions.includes(extension) && audio.type && !audioTypes.includes(audio.type)) {
+        setError("Use an MP3, WAV, or M4A audio file.");
+        return;
+      }
     }
     if ((file && file.size > 50 * 1024 * 1024) || (audio && audio.size > 20 * 1024 * 1024)) {
       setError("Media must be under 50 MB and audio under 20 MB.");
@@ -88,6 +122,7 @@ export function CreatePostModal() {
       audio,
       songTitle,
       songArtist,
+      audioUrl: audio ? null : presetUrl || null,
       location,
       taggedUserIds: tagged.map((friend) => friend.id),
     });
@@ -164,10 +199,12 @@ export function CreatePostModal() {
                 onClick={() => {
                   setSongTitle(track.title);
                   setSongArtist(track.artist);
+                  setPresetUrl(track.url);
+                  setAudio(null);
                 }}
                 className={cn(
                   "rounded-full px-3 py-1.5 text-xs font-semibold",
-                  songTitle === track.title ? "bg-[#EAB308] text-black" : "bg-[#121212] text-zinc-300"
+                  presetUrl === track.url && !audio ? "bg-[#EAB308] text-black" : "bg-[#121212] text-zinc-300"
                 )}
               >
                 {track.title}
@@ -189,9 +226,34 @@ export function CreatePostModal() {
             className="mt-2 h-11 w-full rounded-full border border-white/10 bg-[#121212] px-4 text-sm outline-none"
           />
           <label className="mt-2 flex h-11 cursor-pointer items-center rounded-full border border-white/10 px-4 text-sm text-zinc-400">
-            <span className="truncate">{audio ? audio.name : "Attach audio for playback"}</span>
-            <input type="file" accept={audioTypes.join(",")} className="sr-only" onChange={(event) => setAudio(event.target.files?.[0] ?? null)} />
+            <span className="truncate">{audio ? audio.name : "Upload an MP3, WAV, or M4A"}</span>
+            <input
+              type="file"
+              accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/mp4,audio/x-m4a"
+              className="sr-only"
+              onChange={(event) => {
+                const next = event.target.files?.[0] ?? null;
+                setAudio(next);
+                if (next) setPresetUrl("");
+              }}
+            />
           </label>
+          {previewUrl ? (
+            <div className="mt-3 flex items-center gap-3 rounded-full bg-[#121212] px-2 py-2">
+              <button
+                type="button"
+                onClick={togglePreview}
+                aria-label={previewing ? "Pause preview" : "Play preview"}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#EAB308] text-black"
+              >
+                {previewing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+              </button>
+              <p className="min-w-0 flex-1 truncate text-sm text-white">
+                {songTitle || "Preview"} {songArtist ? `· ${songArtist}` : ""}
+              </p>
+              <audio ref={previewRef} src={previewUrl} preload="none" onEnded={() => setPreviewing(false)} className="hidden" />
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-4">

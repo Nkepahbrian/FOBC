@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Heart, MapPin, MessageCircle, Music2, Pause, Play, Share2, HandHeart } from "lucide-react";
-import { useRef, useState } from "react";
+import { Heart, MapPin, MessageCircle, Pause, Play, Share2, HandHeart } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { FeedPost } from "@/lib/feed/types";
 import { categoryLabel, formatTimestamp } from "@/lib/feed/types";
 import { cn } from "@/lib/utils";
@@ -27,6 +27,8 @@ export function FeedCard({ post, commentsOpen, onToggleComments, onAmen, onPray 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const profileHref = `/profile/${post.userId}`;
+  const audioSrc = post.audioUrl || post.songUrl;
+  const showMusic = Boolean(audioSrc || post.songTitle);
 
   async function share() {
     const url = `${window.location.origin}/feed?post=${post.id}`;
@@ -42,10 +44,22 @@ export function FeedCard({ post, commentsOpen, onToggleComments, onAmen, onPray 
     window.open(`https://wa.me/?text=${encodeURIComponent(`${text} ${url}`)}`, "_blank", "noopener,noreferrer");
   }
 
+  useEffect(() => {
+    function onOther(event: Event) {
+      const id = (event as CustomEvent<string>).detail;
+      if (id === post.id) return;
+      audioRef.current?.pause();
+      setPlaying(false);
+    }
+    window.addEventListener("fobc-audio", onOther);
+    return () => window.removeEventListener("fobc-audio", onOther);
+  }, [post.id]);
+
   function toggleAudio() {
     const audio = audioRef.current;
     if (!audio) return;
     if (audio.paused) {
+      window.dispatchEvent(new CustomEvent("fobc-audio", { detail: post.id }));
       audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
     } else {
       audio.pause();
@@ -89,40 +103,43 @@ export function FeedCard({ post, commentsOpen, onToggleComments, onAmen, onPray 
         </div>
       </header>
 
-      {post.mediaUrl && post.mediaType === "video" ? (
-        <video src={post.mediaUrl} controls playsInline className="max-h-[32rem] w-full bg-black" />
-      ) : null}
-      {post.mediaUrl && post.mediaType === "image" ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={post.mediaUrl} alt="" className="max-h-[32rem] w-full object-cover" />
+      {post.mediaUrl && (post.mediaType === "video" || post.mediaType === "image") ? (
+        <div className="relative">
+          {post.mediaType === "video" ? (
+            <video src={post.mediaUrl} controls playsInline className="max-h-[32rem] w-full bg-black" />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={post.mediaUrl} alt="" className="max-h-[32rem] w-full object-cover" />
+          )}
+          {showMusic ? (
+            <div className="absolute bottom-3 left-3 right-3">
+              <MusicPill
+                title={post.songTitle || "Gospel track"}
+                artist={post.songArtist || "FOBC"}
+                playing={playing}
+                canPlay={Boolean(audioSrc)}
+                onToggle={toggleAudio}
+              />
+            </div>
+          ) : null}
+        </div>
       ) : null}
 
       <div className="px-4">
         {post.content ? <p className="mt-3 whitespace-pre-wrap text-[15px] leading-6 text-white">{post.content}</p> : null}
 
-        {post.songTitle || post.songUrl ? (
-          <div className="mt-3 flex items-center gap-3 rounded-2xl bg-[#121212] px-3 py-2">
-            <button
-              type="button"
-              onClick={toggleAudio}
-              disabled={!post.songUrl}
-              aria-label={playing ? "Pause track" : "Play track"}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-[#EAB308] text-black disabled:opacity-40"
-            >
-              {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-            </button>
-            <div className="min-w-0">
-              <p className="flex items-center gap-1 truncate text-sm font-semibold text-white">
-                <Music2 className="h-3.5 w-3.5 text-[#EAB308]" />
-                {post.songTitle || "Gospel track"}
-              </p>
-              <p className="truncate text-xs text-zinc-400">{post.songArtist || "FOBC"}</p>
-            </div>
-            {post.songUrl ? (
-              <audio ref={audioRef} src={post.songUrl} onEnded={() => setPlaying(false)} className="hidden" />
-            ) : null}
+        {showMusic && !(post.mediaUrl && (post.mediaType === "video" || post.mediaType === "image")) ? (
+          <div className="mt-3">
+            <MusicPill
+              title={post.songTitle || "Gospel track"}
+              artist={post.songArtist || "FOBC"}
+              playing={playing}
+              canPlay={Boolean(audioSrc)}
+              onToggle={toggleAudio}
+            />
           </div>
         ) : null}
+        {audioSrc ? <audio ref={audioRef} src={audioSrc} preload="none" onEnded={() => setPlaying(false)} className="hidden" /> : null}
 
         {post.tags.length > 0 ? (
           <ul className="mt-3 flex flex-wrap gap-2">
@@ -174,5 +191,57 @@ export function FeedCard({ post, commentsOpen, onToggleComments, onAmen, onPray 
         ) : null}
       </div>
     </article>
+  );
+}
+
+function MusicPill({
+  title,
+  artist,
+  playing,
+  canPlay,
+  onToggle,
+}: {
+  title: string;
+  artist: string;
+  playing: boolean;
+  canPlay: boolean;
+  onToggle: () => void;
+}) {
+  const label = `${title} · ${artist}`;
+  return (
+    <div className="flex items-center gap-2 rounded-full bg-black/75 py-1.5 pl-1.5 pr-2 backdrop-blur-md">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={!canPlay}
+        aria-label={playing ? "Pause track" : "Play track"}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#EAB308] text-black disabled:opacity-40"
+      >
+        {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+      </button>
+      <span className={cn("music-eq flex h-4 items-end gap-[2px]", playing && "is-playing")} aria-hidden>
+        <i />
+        <i />
+        <i />
+        <i />
+      </span>
+      <div className="min-w-0 flex-1 overflow-hidden">
+        <div className={cn("music-marquee-track", !playing && "[animation-play-state:paused]")}>
+          <span className="pr-8 text-xs font-semibold text-white">{label}</span>
+          <span className="pr-8 text-xs font-semibold text-white" aria-hidden>
+            {label}
+          </span>
+        </div>
+      </div>
+      <span
+        className={cn(
+          "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-zinc-500 to-black ring-2 ring-[#EAB308]",
+          playing && "animate-spin [animation-duration:3s]"
+        )}
+        aria-hidden
+      >
+        <span className="h-2 w-2 rounded-full bg-[#EAB308]" />
+      </span>
+    </div>
   );
 }

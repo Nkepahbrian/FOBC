@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Grid3X3, Clapperboard, UserSquare2 } from "lucide-react";
+import { readPackedAudio } from "@/lib/feed/api";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -92,14 +93,17 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
         posts: posts.length,
         amens,
         followers,
-        grid: posts.map((post) => ({
-          id: String(post.id),
-          content: String(post.content || post.caption || ""),
-          mediaUrl: (post.media_url as string | null) ?? null,
-          mediaType: (post.media_type as string | null) ?? null,
-          tags: Array.isArray(post.tags) ? (post.tags as string[]) : [],
-          songTitle: (post.song_title as string | null) ?? null,
-        })),
+        grid: posts.map((post) => {
+          const packed = readPackedAudio(String(post.content || post.caption || ""));
+          return {
+            id: String(post.id),
+            content: packed.content,
+            mediaUrl: (post.media_url as string | null) ?? null,
+            mediaType: (post.media_type as string | null) ?? null,
+            tags: Array.isArray(post.tags) ? (post.tags as string[]) : [],
+            songTitle: (post.song_title as string | null) ?? packed.songTitle,
+          };
+        }),
       });
     }
 

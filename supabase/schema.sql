@@ -37,6 +37,7 @@ create table if not exists public.posts (
   song_title text,
   song_artist text,
   song_url text,
+  audio_url text,
   created_at timestamptz not null default now(),
   constraint posts_category_check check (
     category in ('testimony', 'prayer_request', 'sermon_note', 'general')
@@ -390,6 +391,13 @@ values
     true,
     52428800,
     array['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/webm', 'video/quicktime']
+  ),
+  (
+    'music_tracks',
+    'music_tracks',
+    true,
+    20971520,
+    array['audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/x-wav', 'audio/aac', 'audio/webm', 'audio/x-m4a']
   )
 on conflict (id) do update
 set
@@ -469,6 +477,44 @@ create policy "posts_owner_delete"
   to authenticated
   using (
     bucket_id = 'posts'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+drop policy if exists "music_tracks_public_read" on storage.objects;
+drop policy if exists "music_tracks_owner_insert" on storage.objects;
+drop policy if exists "music_tracks_owner_update" on storage.objects;
+drop policy if exists "music_tracks_owner_delete" on storage.objects;
+
+create policy "music_tracks_public_read"
+  on storage.objects for select
+  to public
+  using (bucket_id = 'music_tracks');
+
+create policy "music_tracks_owner_insert"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'music_tracks'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+create policy "music_tracks_owner_update"
+  on storage.objects for update
+  to authenticated
+  using (
+    bucket_id = 'music_tracks'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  )
+  with check (
+    bucket_id = 'music_tracks'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+create policy "music_tracks_owner_delete"
+  on storage.objects for delete
+  to authenticated
+  using (
+    bucket_id = 'music_tracks'
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 
@@ -689,6 +735,7 @@ alter table public.posts add column if not exists location text;
 alter table public.posts add column if not exists is_pinned boolean not null default false;
 alter table public.posts add column if not exists amen_count integer not null default 0;
 alter table public.posts add column if not exists tagged_user_ids uuid[] not null default '{}';
+alter table public.posts add column if not exists audio_url text;
 alter table public.profiles add column if not exists website text;
 alter table public.profiles add column if not exists instagram text;
 

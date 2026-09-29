@@ -70,7 +70,30 @@ function mapPost(row: PostRow, userId?: string): FeedPost {
     songTitle: null,
     songArtist: null,
     songUrl: null,
+    audioUrl: null,
   };
+}
+
+const audioMark = /\n*\[\[fobc-audio:([^\]|]+)\|([^\]|]*)\|([^\]|]*)\]\]\s*$/;
+
+export function readPackedAudio(value: string) {
+  const match = value.match(audioMark);
+  if (!match || match.index === undefined) {
+    return { content: value, audioUrl: null as string | null, songTitle: null as string | null, songArtist: null as string | null };
+  }
+  const title = decodeURIComponent(match[2] || "");
+  const artist = decodeURIComponent(match[3] || "");
+  return {
+    content: value.slice(0, match.index).trimEnd(),
+    audioUrl: decodeURIComponent(match[1]),
+    songTitle: title || null,
+    songArtist: artist || null,
+  };
+}
+
+function packAudio(content: string, audioUrl: string | null, title: string, artist: string) {
+  if (!audioUrl) return content;
+  return `${content}\n\n[[fobc-audio:${encodeURIComponent(audioUrl)}|${encodeURIComponent(title)}|${encodeURIComponent(artist)}]]`;
 }
 
 function missingRelation(message: string) {
@@ -101,6 +124,7 @@ type LoosePost = {
   song_title?: string | null;
   song_artist?: string | null;
   song_url?: string | null;
+  audio_url?: string | null;
   is_pinned?: boolean | null;
   profiles?: ProfileEmbed | ProfileEmbed[];
 };
@@ -120,7 +144,10 @@ async function attachProfiles(supabase: ReturnType<typeof createClient>, rows: L
 
 async function selectPosts(supabase: ReturnType<typeof createClient>) {
   const columnSets = [
+    "id, user_id, content, media_url, media_type, category, tags, created_at, location, song_title, song_artist, song_url, audio_url, is_pinned",
     "id, user_id, content, media_url, media_type, category, tags, created_at, location, song_title, song_artist, song_url, is_pinned",
+    "id, user_id, content, media_url, media_type, category, tags, created_at, song_title, song_artist, song_url, audio_url",
+    "id, user_id, content, media_url, media_type, category, tags, created_at, song_title, song_artist, song_url",
     "id, user_id, content, media_url, media_type, category, tags, created_at",
     "id, user_id, content, category, tags, created_at",
     "id, user_id, content, created_at",
@@ -222,16 +249,22 @@ export async function loadCommunity(): Promise<CommunitySnapshot> {
     const isLiveActive = events.some((event) => isLiveEvent(event));
     const convention = isConventionActive(Date.now(), isLiveActive);
     const ranked = rankPosts(
-      posts.map((post, index) => ({
-        ...post,
-        content: rows[index]?.content || rows[index]?.caption || post.content,
-        location: rows[index]?.location ?? null,
-        songTitle: rows[index]?.song_title ?? null,
-        songArtist: rows[index]?.song_artist ?? null,
-        songUrl: rows[index]?.song_url ?? null,
-        pinned: Boolean(rows[index]?.is_pinned),
-        mediaType: rows[index]?.song_url && !rows[index]?.media_url ? "audio" : post.mediaType,
-      })),
+      posts.map((post, index) => {
+        const row = rows[index];
+        const packed = readPackedAudio(row?.content || row?.caption || post.content);
+        const audioUrl = row?.audio_url || row?.song_url || (post.mediaType === "audio" ? post.mediaUrl : null) || packed.audioUrl;
+        return {
+          ...post,
+          content: packed.content,
+          location: row?.location ?? null,
+          songTitle: row?.song_title || packed.songTitle,
+          songArtist: row?.song_artist || packed.songArtist,
+          audioUrl,
+          songUrl: audioUrl,
+          pinned: Boolean(row?.is_pinned),
+          mediaType: audioUrl && !row?.media_url ? "audio" : post.mediaType,
+        };
+      }),
       convention
     );
 
@@ -418,6 +451,7 @@ export async function createCommunityPost(input: {
   audio: File | null;
   songTitle: string;
   songArtist: string;
+  audioUrl: string | null;
   location: string;
   taggedUserIds: string[];
 }) {
@@ -449,19 +483,30 @@ export async function createCommunityPost(input: {
     mediaType = input.file.type.startsWith("video") ? "video" : input.file.type.startsWith("audio") ? "audio" : "image";
   }
 
-  let songUrl: string | null = null;
+  let audioUrl: string | null = input.audioUrl;
   if (input.audio) {
     const extension = input.audio.name.split(".").pop()?.toLowerCase() || "mp3";
     const path = `${user.id}/${crypto.randomUUID()}.${extension}`;
-    const { error: uploadError } = await supabase.storage.from("posts").upload(path, input.audio, {
-      contentType: input.audio.type || "audio/mpeg",
+    const contentType =
+      input.audio.type || (extension === "wav" ? "audio/wav" : extension === "m4a" ? "audio/mp4" : "audio/mpeg");
+    const uploaded = await supabase.storage.from("music_tracks").upload(path, input.audio, {
+      contentType,
       upsert: false,
     });
-    if (uploadError) return { ok: false as const, message: uploadError.message };
-    songUrl = supabase.storage.from("posts").getPublicUrl(path).data.publicUrl;
+    const stored = uploaded.error
+      ? await supabase.storage.from("posts").upload(path, input.audio, { contentType, upsert: false })
+      : uploaded;
+    if (stored.error) return { ok: false as const, message: uploaded.error?.message || stored.error.message };
+    const bucket = uploaded.error ? "posts" : "music_tracks";
+    audioUrl = supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
   }
 
-  const text = input.content.trim();
+  if (audioUrl && !mediaUrl) {
+    mediaUrl = audioUrl;
+    mediaType = "audio";
+  }
+
+  const text = packAudio(input.content.trim(), audioUrl, input.songTitle.trim(), input.songArtist.trim());
   const payload: Record<string, unknown> = {
     user_id: user.id,
     content: text,
@@ -473,7 +518,8 @@ export async function createCommunityPost(input: {
     location: input.location.trim() || null,
     song_title: input.songTitle.trim() || null,
     song_artist: input.songArtist.trim() || null,
-    song_url: songUrl,
+    song_url: audioUrl,
+    audio_url: audioUrl,
     tagged_user_ids: input.taggedUserIds,
   };
 
@@ -492,6 +538,7 @@ export async function createCommunityPost(input: {
     else if (/location/i.test(message)) delete payload.location;
     else if (/song_title/i.test(message)) delete payload.song_title;
     else if (/song_artist/i.test(message)) delete payload.song_artist;
+    else if (/audio_url/i.test(message)) delete payload.audio_url;
     else if (/song_url/i.test(message)) delete payload.song_url;
     else if (/tagged_user_ids/i.test(message)) delete payload.tagged_user_ids;
     else break;
