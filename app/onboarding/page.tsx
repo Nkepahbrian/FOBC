@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Camera } from "lucide-react";
@@ -20,6 +20,7 @@ export default function OnboardingPage() {
   const [pending, setPending] = useState(false);
   const configured = getSupabaseEnv().isConfigured;
   const [ready, setReady] = useState(!configured);
+  const phoneNumber = useRef("");
 
   useEffect(() => {
     if (!configured) return;
@@ -34,11 +35,16 @@ export default function OnboardingPage() {
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("full_name, bio, avatar_url")
+        .select("full_name, bio, avatar_url, phone_number")
         .eq("id", data.user.id)
         .maybeSingle();
 
-      setFullName(profile?.full_name ?? "");
+      const metadata = data.user.user_metadata ?? {};
+      const metaName = typeof metadata.full_name === "string" ? metadata.full_name : "";
+      const metaPhone = typeof metadata.phone_number === "string" ? metadata.phone_number : "";
+
+      phoneNumber.current = profile?.phone_number || metaPhone || data.user.phone || "";
+      setFullName(profile?.full_name || metaName);
       setBio(profile?.bio ?? "");
       setPreview(profile?.avatar_url ?? "");
       setReady(true);
@@ -112,7 +118,7 @@ export default function OnboardingPage() {
       id: user.id,
       full_name: name,
       bio: bio.trim(),
-      phone_number: user.phone ?? null,
+      ...(phoneNumber.current ? { phone_number: phoneNumber.current } : {}),
       ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
     });
 

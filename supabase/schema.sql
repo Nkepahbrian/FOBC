@@ -101,7 +101,7 @@ create index if not exists daily_winners_post_id_idx on public.daily_winners (po
 
 -- ---------------------------------------------------------------------------
 -- Profile bootstrap
--- Creates a profile row when a Supabase auth user is created (phone OTP).
+-- Creates a profile row when a Supabase auth user is created.
 -- ---------------------------------------------------------------------------
 
 create or replace function public.handle_new_user()
@@ -115,7 +115,7 @@ begin
   values (
     new.id,
     nullif(new.raw_user_meta_data ->> 'full_name', ''),
-    new.phone,
+    coalesce(nullif(new.phone, ''), nullif(new.raw_user_meta_data ->> 'phone_number', '')),
     nullif(new.raw_user_meta_data ->> 'avatar_url', '')
   )
   on conflict (id) do nothing;
