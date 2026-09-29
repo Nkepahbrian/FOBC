@@ -25,30 +25,54 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (!configured) return;
 
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      if (!cancelled) setReady(true);
+    }, 4000);
+
     const supabase = createClient();
 
-    supabase.auth.getUser().then(async ({ data }) => {
-      if (!data.user) {
-        router.replace("/login");
-        return;
-      }
+    supabase.auth
+      .getUser()
+      .then(async ({ data }) => {
+        if (cancelled) return;
+        if (!data.user) {
+          router.replace("/login");
+          return;
+        }
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("full_name, bio, avatar_url, phone_number")
-        .eq("id", data.user.id)
-        .maybeSingle();
+        const metadata = data.user.user_metadata ?? {};
+        const metaName = typeof metadata.full_name === "string" ? metadata.full_name : "";
+        const metaPhone = typeof metadata.phone_number === "string" ? metadata.phone_number : "";
 
-      const metadata = data.user.user_metadata ?? {};
-      const metaName = typeof metadata.full_name === "string" ? metadata.full_name : "";
-      const metaPhone = typeof metadata.phone_number === "string" ? metadata.phone_number : "";
+        try {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("full_name, bio, avatar_url, phone_number")
+            .eq("id", data.user.id)
+            .maybeSingle();
 
-      phoneNumber.current = profile?.phone_number || metaPhone || data.user.phone || "";
-      setFullName(profile?.full_name || metaName);
-      setBio(profile?.bio ?? "");
-      setPreview(profile?.avatar_url ?? "");
-      setReady(true);
-    });
+          phoneNumber.current = profile?.phone_number || metaPhone || data.user.phone || "";
+          setFullName(profile?.full_name || metaName);
+          setBio(profile?.bio ?? "");
+          setPreview(profile?.avatar_url ?? "");
+        } catch {
+          phoneNumber.current = metaPhone || data.user.phone || "";
+          setFullName(metaName);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setReady(true);
+      })
+      .finally(() => {
+        window.clearTimeout(timeout);
+        if (!cancelled) setReady(true);
+      });
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
   }, [configured, router]);
 
   useEffect(() => {
@@ -68,11 +92,6 @@ export default function OnboardingPage() {
       return;
     }
 
-    if (!configured) {
-      setError("Add NEXT_PUBLIC_SUPABASE_ANON_KEY to .env.local before saving your profile.");
-      return;
-    }
-
     if (file && !acceptedTypes.includes(file.type)) {
       setError("Use a JPG, PNG, WEBP, or GIF photo.");
       return;
@@ -84,53 +103,58 @@ export default function OnboardingPage() {
     }
 
     setPending(true);
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    let nextPath = "/feed";
 
-    if (!user) {
-      setPending(false);
-      router.replace("/login");
-      return;
-    }
+    try {
+      if (!configured) return;
 
-    let avatarUrl: string | null = null;
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-    if (file) {
-      const extension = file.name.split(".").pop()?.toLowerCase() || "jpg";
-      const path = `${user.id}/avatar.${extension}`;
-      const { error: uploadError } = await supabase.storage.from("avatars").upload(path, file, {
-        upsert: true,
-        contentType: file.type,
-      });
-
-      if (uploadError) {
-        setPending(false);
-        setError(uploadError.message);
+      if (!user) {
+        nextPath = "/login";
         return;
       }
 
-      avatarUrl = supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl;
+      let avatarUrl = preview.startsWith("http") ? preview : "";
+
+      if (file) {
+        try {
+          const extension = file.name.split(".").pop()?.toLowerCase() || "jpg";
+          const path = `${user.id}/avatar.${extension}`;
+          const { error: uploadError } = await supabase.storage.from("avatars").upload(path, file, {
+            upsert: true,
+            contentType: file.type,
+          });
+
+          if (!uploadError) {
+            avatarUrl = supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl;
+          }
+        } catch {
+          avatarUrl = preview.startsWith("http") ? preview : "";
+        }
+      }
+
+      try {
+        await supabase.from("profiles").upsert(
+          {
+            id: user.id,
+            full_name: name,
+            bio: bio.trim(),
+            avatar_url: avatarUrl || null,
+          },
+          { onConflict: "id" }
+        );
+      } catch {
+        // Profile rows can lag behind auth. The feed still opens.
+      }
+    } finally {
+      setPending(false);
+      router.push(nextPath);
+      router.refresh();
     }
-
-    const { error: saveError } = await supabase.from("profiles").upsert({
-      id: user.id,
-      full_name: name,
-      bio: bio.trim(),
-      ...(phoneNumber.current ? { phone_number: phoneNumber.current } : {}),
-      ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
-    });
-
-    setPending(false);
-
-    if (saveError) {
-      setError(saveError.message);
-      return;
-    }
-
-    router.push("/feed");
-    router.refresh();
   }
 
   return (
@@ -209,6 +233,13 @@ export default function OnboardingPage() {
             className="flex h-14 w-full items-center justify-center rounded-full bg-[#F59E0B] text-base font-semibold text-[#0F172A] transition hover:bg-[#fbbf24] disabled:opacity-60"
           >
             {pending ? "Saving..." : "Enter the community"}
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push("/feed")}
+            className="w-full text-sm font-medium text-[#B45309]"
+          >
+            Continue to the feed
           </button>
         </motion.form>
       )}

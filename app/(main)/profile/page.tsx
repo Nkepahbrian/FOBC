@@ -10,11 +10,18 @@ export default async function ProfilePage() {
 
   if (!user) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("full_name, bio, avatar_url")
-    .eq("id", user.id)
-    .maybeSingle();
+  let profile: { full_name: string | null; bio: string | null; avatar_url: string | null } | null = null;
+
+  try {
+    const { data } = await supabase
+      .from("profiles")
+      .select("full_name, bio, avatar_url")
+      .eq("id", user.id)
+      .maybeSingle();
+    profile = data;
+  } catch {
+    profile = null;
+  }
 
   const name = profile?.full_name || "Your profile";
 

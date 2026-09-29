@@ -52,8 +52,12 @@ export async function GET(request: Request) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const destination = requested
-    ?? (user ? await destinationForUser(supabase, user, null) : "/feed");
+  let destination = "/feed";
+  try {
+    destination = requested ?? (user ? await destinationForUser(supabase, user, null) : "/feed");
+  } catch {
+    destination = "/feed";
+  }
 
   const redirectResponse = NextResponse.redirect(`${origin}${destination}`);
   storedCookies.forEach(({ name, value, options }) => {
