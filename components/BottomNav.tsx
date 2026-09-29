@@ -19,7 +19,7 @@ export function BottomNav() {
   return (
     <nav
       aria-label="Primary"
-      className="fixed bottom-0 left-1/2 z-20 w-full max-w-md -translate-x-1/2 border-t border-slate-200 bg-white/95 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur"
+      className="fixed bottom-0 left-1/2 z-20 w-full max-w-md -translate-x-1/2 border-t border-white/10 bg-black/95 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur"
     >
       <ul className="grid grid-cols-5 items-end">
         {items.map((item) => {
@@ -35,14 +35,14 @@ export function BottomNav() {
                 className={cn(
                   "flex min-w-0 flex-col items-center gap-1 rounded-xl px-1 py-1 text-[11px] font-medium",
                   accent ? "-mt-5" : "",
-                  active ? "text-[#F59E0B]" : "text-slate-500"
+                  active ? "text-[#EAB308]" : "text-zinc-500"
                 )}
               >
                 <span
                   className={cn(
                     "flex items-center justify-center",
                     accent
-                      ? "h-14 w-14 rounded-full bg-[#F59E0B] text-[#0F172A] shadow-lg shadow-amber-500/30"
+                      ? "h-14 w-14 rounded-full bg-[#EAB308] text-black shadow-lg shadow-yellow-500/30"
                       : "h-6 w-6"
                   )}
                 >

@@ -17,7 +17,7 @@ export type FeedPost = {
   category: PostCategory;
   content: string;
   mediaUrl: string | null;
-  mediaType: "image" | "video" | null;
+  mediaType: "image" | "video" | "audio" | null;
   tags: string[];
   amenCount: number;
   commentCount: number;
@@ -25,6 +25,12 @@ export type FeedPost = {
   likedByMe: boolean;
   prayedByMe: boolean;
   source: "live" | "preview";
+  pinned: boolean;
+  featured: boolean;
+  location: string | null;
+  songTitle: string | null;
+  songArtist: string | null;
+  songUrl: string | null;
 };
 
 export type FeedComment = {
@@ -67,6 +73,12 @@ export function formatTimestamp(iso: string, now = Date.now()) {
   const days = Math.round(hours / 24);
   if (days < 7) return `${days}d`;
   return new Date(iso).toLocaleDateString();
+}
+
+export function isConventionActive(now = Date.now(), live = false) {
+  const date = new Date(now);
+  const festivalMonth = date.getFullYear() === 2026 && date.getMonth() === 10;
+  return live || festivalMonth;
 }
 
 export function isLiveEvent(event: LiveEvent, now = Date.now()) {

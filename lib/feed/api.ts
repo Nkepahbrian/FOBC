@@ -1,5 +1,5 @@
 import type { CreateCategory, FeedComment, FeedPost, LiveEvent, PostCategory } from "@/lib/feed/types";
-import { isLiveEvent, postCategories } from "@/lib/feed/types";
+import { isConventionActive, isLiveEvent, postCategories } from "@/lib/feed/types";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
@@ -36,6 +36,7 @@ function asCategory(value: string | null): PostCategory {
 function mediaKind(value: string | null): FeedPost["mediaType"] {
   if (!value) return null;
   if (value.startsWith("video")) return "video";
+  if (value.startsWith("audio")) return "audio";
   return "image";
 }
 
@@ -63,6 +64,12 @@ function mapPost(row: PostRow, userId?: string): FeedPost {
     likedByMe: Boolean(userId && row.likes?.some((like) => like.user_id === userId)),
     prayedByMe: Boolean(userId && row.prayers?.some((prayer) => prayer.user_id === userId)),
     source: "live",
+    pinned: false,
+    featured: false,
+    location: null,
+    songTitle: null,
+    songArtist: null,
+    songUrl: null,
   };
 }
 
@@ -90,6 +97,11 @@ type LoosePost = {
   category?: string | null;
   tags?: string[] | null;
   created_at: string;
+  location?: string | null;
+  song_title?: string | null;
+  song_artist?: string | null;
+  song_url?: string | null;
+  is_pinned?: boolean | null;
   profiles?: ProfileEmbed | ProfileEmbed[];
 };
 
@@ -108,6 +120,7 @@ async function attachProfiles(supabase: ReturnType<typeof createClient>, rows: L
 
 async function selectPosts(supabase: ReturnType<typeof createClient>) {
   const columnSets = [
+    "id, user_id, content, media_url, media_type, category, tags, created_at, location, song_title, song_artist, song_url, is_pinned",
     "id, user_id, content, media_url, media_type, category, tags, created_at",
     "id, user_id, content, category, tags, created_at",
     "id, user_id, content, created_at",
@@ -206,16 +219,55 @@ export async function loadCommunity(): Promise<CommunitySnapshot> {
       return mapped;
     });
 
+    const isLiveActive = events.some((event) => isLiveEvent(event));
+    const convention = isConventionActive(Date.now(), isLiveActive);
+    const ranked = rankPosts(
+      posts.map((post, index) => ({
+        ...post,
+        content: rows[index]?.content || rows[index]?.caption || post.content,
+        location: rows[index]?.location ?? null,
+        songTitle: rows[index]?.song_title ?? null,
+        songArtist: rows[index]?.song_artist ?? null,
+        songUrl: rows[index]?.song_url ?? null,
+        pinned: Boolean(rows[index]?.is_pinned),
+        mediaType: rows[index]?.song_url && !rows[index]?.media_url ? "audio" : post.mediaType,
+      })),
+      convention
+    );
+
     return {
-      posts,
+      posts: ranked,
       events,
-      isLiveActive: events.some((event) => isLiveEvent(event)),
+      isLiveActive,
       mode: "live",
       notice: null,
     };
   } catch {
     return emptyFeed("The live feed could not be loaded.");
   }
+}
+
+function rankPosts(posts: FeedPost[], convention: boolean) {
+  const byEngagement = (left: FeedPost, right: FeedPost) => {
+    const pin = Number(right.pinned) - Number(left.pinned);
+    if (pin) return pin;
+    if (right.amenCount !== left.amenCount) return right.amenCount - left.amenCount;
+    return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+  };
+
+  const sorted = [...posts].sort(byEngagement);
+  if (!convention || sorted.length === 0) return sorted;
+
+  const featured = [...sorted].sort(
+    (left, right) =>
+      right.amenCount - left.amenCount ||
+      new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+  )[0];
+
+  return [
+    { ...featured, pinned: true, featured: true },
+    ...sorted.filter((post) => post.id !== featured.id).map((post) => ({ ...post, featured: false })),
+  ];
 }
 
 async function currentUserId() {
@@ -363,6 +415,11 @@ export async function createCommunityPost(input: {
   content: string;
   tags: string[];
   file: File | null;
+  audio: File | null;
+  songTitle: string;
+  songArtist: string;
+  location: string;
+  taggedUserIds: string[];
 }) {
   if (!getSupabaseEnv().isConfigured) {
     return { ok: false as const, message: "Supabase is not configured yet." };
@@ -389,7 +446,19 @@ export async function createCommunityPost(input: {
     if (uploadError) return { ok: false as const, message: uploadError.message };
 
     mediaUrl = supabase.storage.from("posts").getPublicUrl(path).data.publicUrl;
-    mediaType = input.file.type.startsWith("video") ? "video" : "image";
+    mediaType = input.file.type.startsWith("video") ? "video" : input.file.type.startsWith("audio") ? "audio" : "image";
+  }
+
+  let songUrl: string | null = null;
+  if (input.audio) {
+    const extension = input.audio.name.split(".").pop()?.toLowerCase() || "mp3";
+    const path = `${user.id}/${crypto.randomUUID()}.${extension}`;
+    const { error: uploadError } = await supabase.storage.from("posts").upload(path, input.audio, {
+      contentType: input.audio.type || "audio/mpeg",
+      upsert: false,
+    });
+    if (uploadError) return { ok: false as const, message: uploadError.message };
+    songUrl = supabase.storage.from("posts").getPublicUrl(path).data.publicUrl;
   }
 
   const text = input.content.trim();
@@ -401,19 +470,30 @@ export async function createCommunityPost(input: {
     tags: input.tags,
     media_url: mediaUrl,
     media_type: mediaType,
+    location: input.location.trim() || null,
+    song_title: input.songTitle.trim() || null,
+    song_artist: input.songArtist.trim() || null,
+    song_url: songUrl,
+    tagged_user_ids: input.taggedUserIds,
   };
 
   let { error } = await supabase.from("posts").insert(payload);
 
-  for (let attempt = 0; attempt < 6 && error; attempt += 1) {
-    if (/caption/i.test(error.message)) delete payload.caption;
-    else if (/content/i.test(error.message)) {
+  for (let attempt = 0; attempt < 12 && error; attempt += 1) {
+    const message = error.message;
+    if (/caption/i.test(message)) delete payload.caption;
+    else if (/content/i.test(message)) {
       delete payload.content;
       payload.caption = text;
-    } else if (/category/i.test(error.message)) delete payload.category;
-    else if (/tags/i.test(error.message)) delete payload.tags;
-    else if (/media_url/i.test(error.message)) delete payload.media_url;
-    else if (/media_type/i.test(error.message)) delete payload.media_type;
+    } else if (/category/i.test(message)) delete payload.category;
+    else if (/tags/i.test(message)) delete payload.tags;
+    else if (/media_url/i.test(message)) delete payload.media_url;
+    else if (/media_type/i.test(message)) delete payload.media_type;
+    else if (/location/i.test(message)) delete payload.location;
+    else if (/song_title/i.test(message)) delete payload.song_title;
+    else if (/song_artist/i.test(message)) delete payload.song_artist;
+    else if (/song_url/i.test(message)) delete payload.song_url;
+    else if (/tagged_user_ids/i.test(message)) delete payload.tagged_user_ids;
     else break;
 
     ({ error } = await supabase.from("posts").insert(payload));

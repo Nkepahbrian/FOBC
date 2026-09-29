@@ -1,148 +1,262 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ImagePlus, X } from "lucide-react";
+import { ImagePlus, MapPin, Music2, UserPlus, X } from "lucide-react";
 import { createCommunityPost } from "@/lib/feed/api";
-import { categoryLabel, createCategories, postTags, type CreateCategory } from "@/lib/feed/types";
+import type { CreateCategory } from "@/lib/feed/types";
+import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
-const acceptedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif", "video/mp4", "video/webm", "video/quicktime"];
+const mediaTypes = ["image/jpeg", "image/png", "image/webp", "image/gif", "video/mp4", "video/webm", "video/quicktime"];
+const audioTypes = ["audio/mpeg", "audio/mp4", "audio/wav", "audio/webm", "audio/aac"];
+const tracks = [
+  { title: "Way Maker", artist: "Sinach" },
+  { title: "Goodness of God", artist: "Bethel Music" },
+  { title: "Amazing Grace", artist: "Traditional" },
+];
+const places = ["Convention grounds", "Douala", "Yaoundé", "Cameroon"];
+const pills: { label: string; category: CreateCategory; tag: string }[] = [
+  { label: "#Testimony", category: "testimony", tag: "Testimony" },
+  { label: "#PrayerRequest", category: "prayer_request", tag: "PrayerRequest" },
+  { label: "#Blessing", category: "general", tag: "Blessing" },
+];
+
+type Friend = { id: string; full_name: string | null };
 
 export function CreatePostModal() {
   const router = useRouter();
   const [category, setCategory] = useState<CreateCategory>("testimony");
   const [content, setContent] = useState("");
-  const [tags, setTags] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>(["Testimony"]);
   const [file, setFile] = useState<File | null>(null);
+  const [audio, setAudio] = useState<File | null>(null);
+  const [songTitle, setSongTitle] = useState("");
+  const [songArtist, setSongArtist] = useState("");
+  const [location, setLocation] = useState("");
+  const [friendQuery, setFriendQuery] = useState("");
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [tagged, setTagged] = useState<Friend[]>([]);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
-  function toggleTag(tag: string) {
-    setTags((current) => (current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag]));
+  useEffect(() => {
+    const trimmed = friendQuery.trim().replace(/[%_]/g, "");
+    if (!trimmed) {
+      setFriends([]);
+      return;
+    }
+    const timer = window.setTimeout(async () => {
+      const supabase = createClient();
+      const { data } = await supabase.from("profiles").select("id, full_name").ilike("full_name", `%${trimmed}%`).limit(6);
+      setFriends((data ?? []) as Friend[]);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [friendQuery]);
+
+  function choosePill(pill: (typeof pills)[number]) {
+    setCategory(pill.category);
+    setTags([pill.tag]);
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
-
     if (content.trim().length < 2) {
       setError("Write a few words before sharing.");
       return;
     }
-
-    if (file && !acceptedTypes.includes(file.type)) {
+    if (file && !mediaTypes.includes(file.type)) {
       setError("Use a JPG, PNG, WEBP, GIF, MP4, WEBM, or MOV file.");
       return;
     }
-
-    if (file && file.size > 50 * 1024 * 1024) {
-      setError("Choose a file smaller than 50 MB.");
+    if (audio && audio.type && !audioTypes.includes(audio.type)) {
+      setError("Use an MP3, M4A, WAV, or WEBM audio file.");
+      return;
+    }
+    if ((file && file.size > 50 * 1024 * 1024) || (audio && audio.size > 20 * 1024 * 1024)) {
+      setError("Media must be under 50 MB and audio under 20 MB.");
       return;
     }
 
     setPending(true);
-    const result = await createCommunityPost({ category, content, tags, file });
+    const result = await createCommunityPost({
+      category,
+      content,
+      tags,
+      file,
+      audio,
+      songTitle,
+      songArtist,
+      location,
+      taggedUserIds: tagged.map((friend) => friend.id),
+    });
     setPending(false);
-
     if (!result.ok) {
       setError(result.message);
       return;
     }
-
     router.push("/feed");
     router.refresh();
   }
 
   return (
-    <div className="fixed inset-y-0 left-1/2 z-30 flex w-full max-w-md -translate-x-1/2 flex-col bg-[#0F172A]/45">
-      <form onSubmit={onSubmit} className="mt-8 flex min-h-0 flex-1 flex-col rounded-t-[2rem] bg-white px-5 pb-28 pt-4 shadow-2xl">
+    <div className="fixed inset-y-0 left-1/2 z-30 flex w-full max-w-md -translate-x-1/2 flex-col bg-black/70">
+      <form onSubmit={onSubmit} className="mt-6 flex min-h-0 flex-1 flex-col overflow-y-auto rounded-t-[2rem] bg-[#121212] px-5 pb-28 pt-4 text-white shadow-2xl">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#F59E0B]">Share</p>
-            <h1 className="text-2xl font-semibold text-[#0F172A]">New post</h1>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#EAB308]">Share</p>
+            <h1 className="text-2xl font-semibold">New post</h1>
           </div>
-          <button
-            type="button"
-            onClick={() => router.push("/feed")}
-            aria-label="Close"
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100"
-          >
+          <button type="button" onClick={() => router.push("/feed")} aria-label="Close" className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10">
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="mt-5 grid grid-cols-3 gap-2">
-          {createCategories.map((item) => (
+        <div className="mt-5 flex gap-2 overflow-x-auto">
+          {pills.map((pill) => (
             <button
-              key={item}
+              key={pill.label}
               type="button"
-              aria-pressed={category === item}
-              onClick={() => setCategory(item)}
+              aria-pressed={tags.includes(pill.tag)}
+              onClick={() => choosePill(pill)}
               className={cn(
-                "h-10 rounded-full text-xs font-semibold",
-                category === item ? "bg-[#0F172A] text-white" : "bg-slate-100 text-slate-600"
+                "h-9 shrink-0 rounded-full px-3 text-xs font-semibold",
+                tags.includes(pill.tag) ? "bg-[#EAB308] text-black" : "bg-black text-zinc-300"
               )}
             >
-              {categoryLabel(item)}
+              {pill.label}
             </button>
           ))}
         </div>
 
-        <label className="mt-4 block flex-1">
-          <span className="sr-only">Post</span>
-          <textarea
-            value={content}
-            onChange={(event) => setContent(event.target.value)}
-            rows={6}
-            maxLength={2000}
-            placeholder="Share a testimony, a prayer request, or a word for the community."
-            className="w-full resize-none rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 outline-none ring-[#F59E0B] focus:bg-white focus:ring-2"
-          />
-        </label>
+        <textarea
+          value={content}
+          onChange={(event) => setContent(event.target.value)}
+          rows={5}
+          maxLength={2000}
+          aria-label="Post"
+          placeholder="Share a testimony, a prayer request, or a blessing."
+          className="mt-4 w-full resize-none rounded-3xl border border-white/10 bg-black px-4 py-4 text-sm leading-6 text-white outline-none ring-[#EAB308] focus:ring-2"
+        />
 
-        <div className="mt-4">
-          <p className="text-sm font-medium">Tags</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {postTags.map((tag) => (
-              <button
-                key={tag}
-                type="button"
-                aria-pressed={tags.includes(tag)}
-                onClick={() => toggleTag(tag)}
-                className={cn(
-                  "rounded-full px-3 py-1.5 text-xs font-semibold",
-                  tags.includes(tag) ? "bg-[#F59E0B] text-[#0F172A]" : "bg-slate-100 text-slate-600"
-                )}
-              >
-                {tag}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <label className="mt-4 flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600">
-          <ImagePlus className="h-5 w-5 text-[#F59E0B]" />
-          <span className="min-w-0 flex-1 truncate">{file ? file.name : "Add a photo or video"}</span>
+        <label className="mt-4 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-3xl border border-dashed border-white/20 bg-black px-4 py-8 text-sm text-zinc-300">
+          <ImagePlus className="h-6 w-6 text-[#EAB308]" />
+          <span className="max-w-full truncate">{file ? file.name : "Drop a photo or video, or tap to upload"}</span>
           <input
             type="file"
-            accept={acceptedTypes.join(",")}
+            accept={mediaTypes.join(",")}
             className="sr-only"
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
           />
         </label>
 
-        {error ? (
-          <p role="alert" className="mt-3 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
+        <div className="mt-4 rounded-3xl bg-black p-4">
+          <p className="flex items-center gap-2 text-sm font-semibold">
+            <Music2 className="h-4 w-4 text-[#EAB308]" />
+            Music
           </p>
-        ) : null}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {tracks.map((track) => (
+              <button
+                key={track.title}
+                type="button"
+                onClick={() => {
+                  setSongTitle(track.title);
+                  setSongArtist(track.artist);
+                }}
+                className={cn(
+                  "rounded-full px-3 py-1.5 text-xs font-semibold",
+                  songTitle === track.title ? "bg-[#EAB308] text-black" : "bg-[#121212] text-zinc-300"
+                )}
+              >
+                {track.title}
+              </button>
+            ))}
+          </div>
+          <input
+            value={songTitle}
+            onChange={(event) => setSongTitle(event.target.value)}
+            placeholder="Song title"
+            aria-label="Song title"
+            className="mt-3 h-11 w-full rounded-full border border-white/10 bg-[#121212] px-4 text-sm outline-none"
+          />
+          <input
+            value={songArtist}
+            onChange={(event) => setSongArtist(event.target.value)}
+            placeholder="Artist"
+            aria-label="Song artist"
+            className="mt-2 h-11 w-full rounded-full border border-white/10 bg-[#121212] px-4 text-sm outline-none"
+          />
+          <label className="mt-2 flex h-11 cursor-pointer items-center rounded-full border border-white/10 px-4 text-sm text-zinc-400">
+            <span className="truncate">{audio ? audio.name : "Attach audio for playback"}</span>
+            <input type="file" accept={audioTypes.join(",")} className="sr-only" onChange={(event) => setAudio(event.target.files?.[0] ?? null)} />
+          </label>
+        </div>
 
-        <button
-          type="submit"
-          disabled={pending}
-          className="mt-4 flex h-12 items-center justify-center rounded-full bg-[#0F172A] text-sm font-semibold text-white disabled:opacity-60"
-        >
+        <div className="mt-4">
+          <p className="flex items-center gap-2 text-sm font-semibold">
+            <MapPin className="h-4 w-4 text-[#EAB308]" />
+            Location
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {places.map((place) => (
+              <button
+                key={place}
+                type="button"
+                onClick={() => setLocation(place)}
+                className={cn("rounded-full px-3 py-1.5 text-xs font-semibold", location === place ? "bg-[#EAB308] text-black" : "bg-black text-zinc-300")}
+              >
+                {place}
+              </button>
+            ))}
+          </div>
+          <input
+            value={location}
+            onChange={(event) => setLocation(event.target.value)}
+            placeholder="Check in"
+            aria-label="Location"
+            className="mt-2 h-11 w-full rounded-full border border-white/10 bg-black px-4 text-sm outline-none"
+          />
+        </div>
+
+        <div className="mt-4">
+          <p className="flex items-center gap-2 text-sm font-semibold">
+            <UserPlus className="h-4 w-4 text-[#EAB308]" />
+            Tag friends
+          </p>
+          <input
+            value={friendQuery}
+            onChange={(event) => setFriendQuery(event.target.value)}
+            placeholder="Search profiles"
+            aria-label="Tag friends"
+            className="mt-2 h-11 w-full rounded-full border border-white/10 bg-black px-4 text-sm outline-none"
+          />
+          {friends.length > 0 ? (
+            <ul className="mt-2">
+              {friends.map((friend) => (
+                <li key={friend.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTagged((current) => (current.some((item) => item.id === friend.id) ? current : [...current, friend]));
+                      setFriendQuery("");
+                      setFriends([]);
+                    }}
+                    className="w-full py-2 text-left text-sm"
+                  >
+                    {friend.full_name || "Community member"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {tagged.length > 0 ? <p className="mt-2 text-xs text-[#EAB308]">{tagged.map((friend) => friend.full_name || "Member").join(", ")}</p> : null}
+        </div>
+
+        {error ? <p role="alert" className="mt-3 rounded-2xl bg-red-500/15 px-4 py-3 text-sm text-red-300">{error}</p> : null}
+
+        <button type="submit" disabled={pending} className="mt-4 flex h-12 items-center justify-center rounded-full bg-[#EAB308] text-sm font-semibold text-black disabled:opacity-60">
           {pending ? "Sharing..." : "Share with the community"}
         </button>
       </form>

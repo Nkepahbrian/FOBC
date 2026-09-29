@@ -1,7 +1,8 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { Phone, Search } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
@@ -10,6 +11,7 @@ type Person = {
   full_name: string | null;
   avatar_url: string | null;
   bio: string | null;
+  phone_number?: string | null;
 };
 
 type ChatMessage = {
@@ -48,6 +50,8 @@ export function ChatScreen() {
   const [draft, setDraft] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [filter, setFilter] = useState<"All" | "Primary" | "General" | "Requests">("All");
+  const params = useSearchParams();
 
   const loadThreads = useCallback(async (userId: string) => {
     if (!getSupabaseEnv().isConfigured) {
@@ -84,7 +88,7 @@ export function ChatScreen() {
 
     const { data: profiles } = await supabase
       .from("profiles")
-      .select("id, full_name, avatar_url, bio")
+      .select("id, full_name, avatar_url, bio, phone_number")
       .in("id", ids);
 
     const byId = new Map((profiles ?? []).map((profile) => [profile.id, profile as Person]));
@@ -156,7 +160,7 @@ export function ChatScreen() {
       const supabase = createClient();
       const { data } = await supabase
         .from("profiles")
-        .select("id, full_name, avatar_url, bio")
+        .select("id, full_name, avatar_url, bio, phone_number")
         .ilike("full_name", `%${trimmed}%`)
         .neq("id", me)
         .limit(8);
@@ -165,6 +169,27 @@ export function ChatScreen() {
 
     return () => window.clearTimeout(timer);
   }, [me, query]);
+
+  useEffect(() => {
+    const withId = params.get("with");
+    if (!withId || !me) return;
+    let cancelled = false;
+    const supabase = createClient();
+    supabase
+      .from("profiles")
+      .select("id, full_name, avatar_url, bio, phone_number")
+      .eq("id", withId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled && data) {
+          setActive(data as Person);
+          loadThread(me, data.id);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadThread, me, params]);
 
   const activeMessages = useMemo(() => messages, [messages]);
 
@@ -214,20 +239,19 @@ export function ChatScreen() {
   if (active) {
     const name = displayName(active);
     return (
-      <section className="flex min-h-[70vh] flex-col">
+      <section className="flex min-h-[70vh] flex-col px-4 pt-4 text-white">
         <div className="flex items-center gap-3">
-          <button type="button" onClick={() => setActive(null)} className="text-sm font-semibold text-[#B45309]">
+          <button type="button" onClick={() => setActive(null)} className="text-sm font-semibold text-[#EAB308]">
             Back
           </button>
+          <Avatar person={active} />
           <div className="min-w-0">
-            <h1 className="truncate text-xl font-semibold text-[#0F172A]">{name}</h1>
-            <p className="truncate text-sm text-slate-500">{active.bio || "Direct message"}</p>
+            <h1 className="truncate text-base font-semibold">{name}</h1>
+            <p className="truncate text-xs text-zinc-400">{active.bio || "Active now"}</p>
           </div>
         </div>
         <div className="mt-4 flex flex-1 flex-col gap-2">
-          {activeMessages.length === 0 ? (
-            <p className="text-sm text-slate-500">Say hello and start the conversation.</p>
-          ) : null}
+          {activeMessages.length === 0 ? <p className="text-sm text-zinc-400">Say hello and start the conversation.</p> : null}
           {activeMessages.map((message) => {
             const mine = message.sender_id === me;
             return (
@@ -235,8 +259,8 @@ export function ChatScreen() {
                 key={message.id}
                 className={
                   mine
-                    ? "ml-10 rounded-2xl rounded-br-md bg-[#0F172A] px-3 py-2 text-sm text-white"
-                    : "mr-10 rounded-2xl rounded-bl-md bg-slate-100 px-3 py-2 text-sm text-[#0F172A]"
+                    ? "ml-10 rounded-2xl rounded-br-md bg-[#EAB308] px-3 py-2 text-sm text-black"
+                    : "mr-10 rounded-2xl rounded-bl-md bg-[#121212] px-3 py-2 text-sm text-white"
                 }
               >
                 {message.content}
@@ -244,19 +268,19 @@ export function ChatScreen() {
             );
           })}
         </div>
-        {notice ? <p className="mt-3 text-sm text-[#92400E]">{notice}</p> : null}
+        {notice ? <p className="mt-3 text-sm text-[#EAB308]">{notice}</p> : null}
         <form onSubmit={send} className="mt-4 flex gap-2">
           <input
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             placeholder="Write a message"
             aria-label="Write a message"
-            className="h-11 flex-1 rounded-full border border-slate-200 px-4 text-sm outline-none ring-[#F59E0B] focus:ring-2"
+            className="h-11 flex-1 rounded-full border border-white/10 bg-black px-4 text-sm text-white outline-none ring-[#EAB308] focus:ring-2"
           />
           <button
             type="submit"
             disabled={sending}
-            className="h-11 rounded-full bg-[#F59E0B] px-4 text-sm font-semibold text-[#0F172A] disabled:opacity-60"
+            className="h-11 rounded-full bg-[#EAB308] px-4 text-sm font-semibold text-black disabled:opacity-60"
           >
             Send
           </button>
@@ -265,56 +289,122 @@ export function ChatScreen() {
     );
   }
 
+  const visibleThreads = threads.filter((thread) => {
+    const request = /pray|request/i.test(thread.lastMessage);
+    if (filter === "Requests") return request;
+    if (filter === "Primary") return !request;
+    if (filter === "General") return true;
+    return true;
+  });
+  const notes = visibleThreads.slice(0, 6);
+
   return (
-    <section className="space-y-4">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#F59E0B]">Messages</p>
-        <h1 className="text-3xl font-semibold tracking-tight text-[#0F172A]">Chat</h1>
+    <section className="text-white">
+      <div className="px-4 pt-4">
+        <h1 className="text-2xl font-semibold tracking-tight">Messages</h1>
+        <label className="mt-3 flex h-10 items-center gap-2 rounded-xl bg-[#121212] px-3">
+          <Search className="h-4 w-4 text-zinc-500" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search"
+            aria-label="Find someone to message"
+            className="h-full w-full bg-transparent text-sm outline-none placeholder:text-zinc-500"
+          />
+        </label>
       </div>
-      <label className="flex h-12 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4">
-        <Search className="h-4 w-4 text-slate-400" />
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Find someone to message"
-          aria-label="Find someone to message"
-          className="h-full w-full bg-transparent text-sm outline-none"
-        />
-      </label>
+
+      <div className="mt-4 flex gap-4 overflow-x-auto px-4 pb-2">
+        <div className="w-16 shrink-0 text-center">
+          <div className="relative mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-dashed border-white/20 bg-[#121212] text-2xl text-[#EAB308]">
+            +
+          </div>
+          <p className="mt-1 text-[11px] text-zinc-400">Your note</p>
+        </div>
+        {notes.map((thread) => {
+          const recent = Date.now() - new Date(thread.lastAt).getTime() < 60 * 60 * 1000;
+          return (
+            <button key={thread.person.id} type="button" onClick={() => openPerson(thread.person)} className="w-16 shrink-0 text-center">
+              <span className="relative mx-auto block w-fit">
+                <Avatar person={thread.person} />
+                {recent ? <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-black bg-emerald-400" /> : null}
+              </span>
+              <span className="mt-1 block truncate text-[11px] text-zinc-300">{displayName(thread.person).split(" ")[0]}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-2 flex gap-2 overflow-x-auto px-4">
+        {(["All", "Primary", "General", "Requests"] as const).map((item) => (
+          <button
+            key={item}
+            type="button"
+            aria-pressed={filter === item}
+            onClick={() => setFilter(item)}
+            className={
+              filter === item
+                ? "h-8 rounded-full bg-white px-3 text-xs font-semibold text-black"
+                : "h-8 rounded-full bg-[#121212] px-3 text-xs font-semibold text-zinc-300"
+            }
+          >
+            {item}
+          </button>
+        ))}
+      </div>
+
       {people.length > 0 ? (
-        <ul className="divide-y divide-slate-100">
+        <ul className="mt-3 px-4">
           {people.map((person) => (
             <li key={person.id}>
               <button type="button" onClick={() => openPerson(person)} className="flex w-full items-center gap-3 py-3 text-left">
                 <Avatar person={person} />
                 <span className="min-w-0">
-                  <span className="block truncate font-semibold text-[#0F172A]">{displayName(person)}</span>
-                  <span className="block truncate text-sm text-slate-500">{person.bio || "Start a conversation"}</span>
+                  <span className="block truncate font-semibold">{displayName(person)}</span>
+                  <span className="block truncate text-sm text-zinc-400">{person.bio || "Start a conversation"}</span>
                 </span>
               </button>
             </li>
           ))}
         </ul>
       ) : null}
-      {notice ? <p className="rounded-2xl bg-[#F59E0B]/15 px-4 py-3 text-sm text-[#92400E]">{notice}</p> : null}
-      {threads.length === 0 && people.length === 0 ? (
-        <p className="text-sm text-slate-500">Search for a member to start a direct message.</p>
+
+      {notice ? <p className="mx-4 mt-3 rounded-2xl bg-[#EAB308]/15 px-4 py-3 text-sm text-[#EAB308]">{notice}</p> : null}
+      {visibleThreads.length === 0 && people.length === 0 ? (
+        <p className="px-4 pt-6 text-sm text-zinc-400">Search for a member to start a direct message.</p>
       ) : null}
-      <ul className="divide-y divide-slate-100">
-        {threads.map((thread) => (
-          <li key={thread.person.id}>
-            <button type="button" onClick={() => openPerson(thread.person)} className="flex w-full items-center gap-3 py-3 text-left">
-              <Avatar person={thread.person} />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-2">
-                  <span className="truncate font-semibold text-[#0F172A]">{displayName(thread.person)}</span>
-                  <time className="shrink-0 text-xs text-slate-400" dateTime={thread.lastAt}>
-                    {new Date(thread.lastAt).toLocaleDateString()}
-                  </time>
+
+      <ul>
+        {visibleThreads.map((thread) => (
+          <li key={thread.person.id} className="px-4">
+            <div className="flex items-center gap-3 py-3">
+              <button type="button" onClick={() => openPerson(thread.person)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+                <Avatar person={thread.person} />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="truncate font-semibold">{displayName(thread.person)}</span>
+                    <time className="shrink-0 text-xs text-zinc-500" dateTime={thread.lastAt}>
+                      {new Date(thread.lastAt).toLocaleDateString()}
+                    </time>
+                  </span>
+                  <span className="block truncate text-sm text-zinc-400">{thread.lastMessage}</span>
                 </span>
-                <span className="block truncate text-sm text-slate-500">{thread.lastMessage}</span>
-              </span>
-            </button>
+              </button>
+              <button
+                type="button"
+                aria-label={`Call ${displayName(thread.person)}`}
+                onClick={() => {
+                  if (thread.person.phone_number) {
+                    window.location.href = `tel:${thread.person.phone_number}`;
+                    return;
+                  }
+                  setNotice("No phone number is saved on this profile yet.");
+                }}
+                className="flex h-10 w-10 items-center justify-center rounded-full text-white"
+              >
+                <Phone className="h-5 w-5" />
+              </button>
+            </div>
           </li>
         ))}
       </ul>
@@ -329,7 +419,7 @@ function Avatar({ person }: { person: Person }) {
     return <img src={person.avatar_url} alt="" className="h-12 w-12 rounded-full object-cover" />;
   }
   return (
-    <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#0F172A] text-sm font-semibold text-[#FBBF24]">
+    <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#121212] text-sm font-semibold text-[#EAB308]">
       {initials(name) || "F"}
     </span>
   );

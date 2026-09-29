@@ -13,7 +13,7 @@ const AUTH_EMAIL_KEY = "fobc-auth-email";
 const AUTH_INTENT_KEY = "fobc-auth-intent";
 
 const fieldClass =
-  "mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5 outline-none ring-[#F59E0B] transition focus:border-[#F59E0B] focus:bg-white focus:ring-2";
+  "mt-2 w-full rounded-2xl border border-white/10 bg-black px-4 py-3.5 text-white outline-none ring-[#EAB308] transition placeholder:text-zinc-500 focus:border-[#EAB308] focus:ring-2";
 
 function normalizePhone(input: string) {
   const compact = input.trim().replace(/[\s()-]/g, "");
@@ -133,7 +133,7 @@ export default function LoginPage() {
           : "Sign in with the email and password for your account."
       }
     >
-      <div className="mb-6 grid grid-cols-2 rounded-full bg-slate-100 p-1">
+      <div className="mb-6 grid grid-cols-2 rounded-full bg-black p-1">
         {(["signin", "signup"] as const).map((tab) => (
           <button
             key={tab}
@@ -141,7 +141,7 @@ export default function LoginPage() {
             aria-pressed={mode === tab}
             onClick={() => switchMode(tab)}
             className={`h-11 rounded-full text-sm font-semibold transition ${
-              mode === tab ? "bg-[#0F172A] text-white" : "text-slate-500"
+              mode === tab ? "bg-[#EAB308] text-black" : "text-zinc-500"
             }`}
           >
             {tab === "signin" ? "Sign In" : "Create Account"}
@@ -198,7 +198,7 @@ export default function LoginPage() {
               type="button"
               onClick={() => setShowPassword((current) => !current)}
               aria-label={showPassword ? "Hide password" : "Show password"}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400"
             >
               {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
             </button>
@@ -217,7 +217,7 @@ export default function LoginPage() {
               onChange={(event) => setPhone(event.target.value)}
               className={fieldClass}
             />
-            <span className="mt-2 block text-xs text-slate-500">
+            <span className="mt-2 block text-xs text-zinc-500">
               Optional. Saved on your profile for contact details.
             </span>
           </label>
@@ -232,7 +232,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={pending}
-          className="flex h-14 w-full items-center justify-center rounded-full bg-[#0F172A] text-base font-semibold text-white transition hover:bg-[#1e293b] disabled:opacity-60"
+          className="flex h-14 w-full items-center justify-center rounded-full bg-[#EAB308] text-base font-semibold text-black transition hover:bg-[#FACC15] disabled:opacity-60"
         >
           {pending ? "Please wait..." : mode === "signup" ? "Create account" : "Sign in"}
         </button>

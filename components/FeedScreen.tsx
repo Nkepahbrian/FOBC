@@ -20,11 +20,9 @@ import {
 import type { FeedComment } from "@/lib/feed/types";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
-import { cn } from "@/lib/utils";
 
 export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "prayer" }) {
   const [snapshot, setSnapshot] = useState<CommunitySnapshot | null>(null);
-  const [tab, setTab] = useState<"feed" | "prayer">(initialTab);
   const [commentsByPost, setCommentsByPost] = useState<Record<string, FeedComment[]>>({});
   const [openComments, setOpenComments] = useState<string | null>(null);
 
@@ -148,48 +146,39 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
   }
 
   const isLiveActive = snapshot?.isLiveActive ?? false;
-  const blessings = snapshot?.posts.filter((post) => post.category !== "prayer_request") ?? [];
+  const visiblePosts =
+    initialTab === "prayer"
+      ? snapshot?.posts.filter((post) => post.category === "prayer_request") ?? []
+      : snapshot?.posts ?? [];
   const openPost = snapshot?.posts.find((post) => post.id === openComments) ?? null;
 
   return (
-    <div className="-mx-5 -mt-8">
+    <div>
       <FeedHeader />
       <LiveEventBanner events={snapshot?.events ?? []} isLiveActive={isLiveActive} />
-      <div className="space-y-4 px-4 py-3">
-        <div className="grid grid-cols-2 rounded-full bg-slate-100 p-1">
-          {(
-            [
-              ["feed", "Blessings"],
-              ["prayer", "Prayer Wall"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={tab === value}
-              onClick={() => setTab(value)}
-              className={cn(
-                "h-10 rounded-full text-sm font-semibold",
-                tab === value ? "bg-[#0F172A] text-white" : "text-slate-500"
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
+      <div className="py-2">
         {snapshot?.notice ? (
-          <p className="rounded-2xl bg-[#F59E0B]/15 px-4 py-3 text-sm text-[#92400E]">{snapshot.notice}</p>
+          <p className="mx-4 rounded-2xl bg-[#EAB308]/15 px-4 py-3 text-sm text-[#EAB308]">{snapshot.notice}</p>
         ) : null}
 
-        {!snapshot ? <p className="text-sm text-slate-500">Loading blessings...</p> : null}
+        {!snapshot ? <p className="px-4 text-sm text-zinc-500">Loading blessings...</p> : null}
 
-        {snapshot && tab === "feed" ? (
-          <div className="-mx-4 divide-y divide-slate-100">
-            {blessings.length === 0 ? (
-              <p className="px-4 text-sm text-slate-500">No testimonies yet. Share a blessing with the community.</p>
+        {snapshot && initialTab === "prayer" ? (
+          <PrayerWall
+            posts={snapshot.posts}
+            openComments={openComments}
+            onToggleComments={onToggleComments}
+            onAmen={onAmen}
+            onPray={onPray}
+          />
+        ) : null}
+
+        {snapshot && initialTab !== "prayer" ? (
+          <div>
+            {visiblePosts.length === 0 ? (
+              <p className="px-4 text-sm text-zinc-400">No blessings yet. Share the first testimony.</p>
             ) : null}
-            {blessings.map((post, index) => (
+            {visiblePosts.map((post, index) => (
               <motion.div
                 key={post.id}
                 initial={{ opacity: 0, y: 8 }}
@@ -206,16 +195,6 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
               </motion.div>
             ))}
           </div>
-        ) : null}
-
-        {snapshot && tab === "prayer" ? (
-          <PrayerWall
-            posts={snapshot.posts}
-            openComments={openComments}
-            onToggleComments={onToggleComments}
-            onAmen={onAmen}
-            onPray={onPray}
-          />
         ) : null}
       </div>
       <CommentDrawer

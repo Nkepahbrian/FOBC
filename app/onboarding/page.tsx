@@ -203,7 +203,7 @@ export default function OnboardingPage() {
               onChange={(event) => setFullName(event.target.value)}
               maxLength={80}
               autoComplete="name"
-              className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 outline-none ring-[#F59E0B] transition focus:border-[#F59E0B] focus:bg-white focus:ring-2"
+              className="mt-2 w-full rounded-2xl border border-white/10 bg-black px-4 py-4 text-white outline-none ring-[#EAB308] transition focus:border-[#EAB308] focus:ring-2"
               required
             />
           </label>
@@ -216,7 +216,7 @@ export default function OnboardingPage() {
               maxLength={160}
               rows={4}
               placeholder="A short word about you and why you are here."
-              className="mt-2 w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 outline-none ring-[#F59E0B] transition focus:border-[#F59E0B] focus:bg-white focus:ring-2"
+              className="mt-2 w-full resize-none rounded-2xl border border-white/10 bg-black px-4 py-4 text-white outline-none ring-[#EAB308] transition focus:border-[#EAB308] focus:ring-2"
             />
             <span className="mt-2 block text-right text-xs text-slate-500">{bio.trim().length}/160</span>
           </label>
