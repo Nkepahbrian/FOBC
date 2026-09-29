@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
-const protectedPrefixes = ["/feed", "/chat", "/profile", "/create"];
+const protectedPrefixes = ["/feed", "/chat", "/profile", "/create", "/prayer"];
 
 function isProtectedPath(pathname: string) {
   return protectedPrefixes.some(
@@ -11,6 +11,10 @@ function isProtectedPath(pathname: string) {
 }
 
 export async function middleware(request: NextRequest) {
+  if (request.nextUrl.pathname.startsWith("/auth/callback")) {
+    return NextResponse.next({ request });
+  }
+
   const { url, key, isConfigured } = getSupabaseEnv();
   let response = NextResponse.next({ request });
 
@@ -45,6 +49,17 @@ export async function middleware(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
+
+  if (user && request.nextUrl.pathname === "/login") {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = "/feed";
+    redirectUrl.search = "";
+    const redirectResponse = NextResponse.redirect(redirectUrl);
+    response.cookies.getAll().forEach((cookie) => {
+      redirectResponse.cookies.set(cookie);
+    });
+    return redirectResponse;
+  }
 
   if (!user && isProtectedPath(request.nextUrl.pathname)) {
     const redirectUrl = request.nextUrl.clone();

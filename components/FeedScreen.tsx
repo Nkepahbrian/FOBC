@@ -12,9 +12,9 @@ import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 import { cn } from "@/lib/utils";
 
-export function FeedScreen() {
+export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "prayer" }) {
   const [snapshot, setSnapshot] = useState<CommunitySnapshot | null>(null);
-  const [tab, setTab] = useState<"feed" | "prayer">("feed");
+  const [tab, setTab] = useState<"feed" | "prayer">(initialTab);
   const [commentsByPost, setCommentsByPost] = useState<Record<string, FeedComment[]>>({});
   const [openComments, setOpenComments] = useState<string | null>(null);
 

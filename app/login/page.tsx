@@ -85,7 +85,7 @@ export default function LoginPage() {
         email: cleanEmail,
         password,
         options: {
-          emailRedirectTo: `${origin}/auth/callback`,
+          emailRedirectTo: `${origin}/auth/callback?next=/onboarding`,
           data: {
             full_name: name,
             ...(phoneNumber ? { phone_number: phoneNumber } : {}),

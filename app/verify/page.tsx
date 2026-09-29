@@ -103,7 +103,7 @@ export default function VerifyPage() {
     const { error: resendError } = await supabase.auth.resend({
       type: "signup",
       email,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+      options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/onboarding` },
     });
     setResending(false);
 

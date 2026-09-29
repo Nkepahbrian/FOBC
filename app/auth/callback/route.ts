@@ -1,20 +1,64 @@
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { destinationForUser } from "@/lib/auth/destination";
+import { getSupabaseEnv } from "@/lib/supabase/env";
+
+const allowedPaths = new Set(["/feed", "/onboarding", "/create", "/profile", "/prayer"]);
+
+function safeNext(value: string | null) {
+  if (!value) return null;
+  const path = value.split("?")[0];
+  return allowedPaths.has(path) ? path : null;
+}
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
+  const requested = safeNext(searchParams.get("next"));
 
   if (!code) {
-    return NextResponse.redirect(`${origin}/verify`);
+    return NextResponse.redirect(`${origin}/login`);
   }
 
-  const supabase = createClient();
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  const { url, key, isConfigured } = getSupabaseEnv();
+  if (!isConfigured) {
+    return NextResponse.redirect(`${origin}/login`);
+  }
 
+  const cookieStore = cookies();
+  const storedCookies: { name: string; value: string; options?: Parameters<typeof cookieStore.set>[2] }[] = [];
+
+  const supabase = createServerClient(url, key, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll();
+      },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value, options }) => {
+          cookieStore.set(name, value, options);
+          storedCookies.push({ name, value, options });
+        });
+      },
+    },
+  });
+
+  const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
     return NextResponse.redirect(`${origin}/login`);
   }
 
-  return NextResponse.redirect(`${origin}/verify?status=confirmed`);
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const destination = requested
+    ?? (user ? await destinationForUser(supabase, user, null) : "/feed");
+
+  const redirectResponse = NextResponse.redirect(`${origin}${destination}`);
+  storedCookies.forEach(({ name, value, options }) => {
+    redirectResponse.cookies.set(name, value, options);
+  });
+
+  return redirectResponse;
 }
