@@ -1,4 +1,3 @@
-import { fallbackPosts } from "@/lib/feed/mock";
 import type { CreateCategory, FeedComment, FeedPost, LiveEvent, PostCategory } from "@/lib/feed/types";
 import { isLiveEvent, postCategories } from "@/lib/feed/types";
 import { createClient } from "@/lib/supabase/client";
@@ -28,14 +27,6 @@ type PostRow = {
   comments: { id: string }[] | null;
   prayers: { user_id: string }[] | null;
 };
-
-const postSelect = `
-  id, user_id, caption, media_url, media_type, category, tags, created_at,
-  profiles (full_name, avatar_url),
-  likes (user_id),
-  comments (id),
-  prayers (user_id)
-`;
 
 function asCategory(value: string | null): PostCategory {
   if (value && postCategories.includes(value as PostCategory)) return value as PostCategory;
@@ -75,33 +66,106 @@ function mapPost(row: PostRow, userId?: string): FeedPost {
   };
 }
 
-function preview(notice: string): CommunitySnapshot {
+function missingRelation(message: string) {
+  return /does not exist|schema cache|could not find the table|relation/i.test(message);
+}
+
+function emptyFeed(notice: string, events: LiveEvent[] = []): CommunitySnapshot {
   return {
-    posts: fallbackPosts(),
-    events: [],
-    isLiveActive: false,
-    mode: "preview",
+    posts: [],
+    events,
+    isLiveActive: events.some((event) => isLiveEvent(event)),
+    mode: "live",
     notice,
   };
 }
 
-export async function loadCommunity(): Promise<CommunitySnapshot> {
-  if (!getSupabaseEnv().isConfigured) {
-    return preview("Supabase is not configured. Showing sample blessings.");
+type LoosePost = {
+  id: string;
+  user_id: string;
+  caption?: string | null;
+  content?: string | null;
+  media_url?: string | null;
+  media_type?: string | null;
+  category?: string | null;
+  tags?: string[] | null;
+  created_at: string;
+  profiles?: ProfileEmbed | ProfileEmbed[];
+};
+
+async function attachProfiles(supabase: ReturnType<typeof createClient>, rows: LoosePost[]) {
+  const ids = Array.from(new Set(rows.map((row) => row.user_id)));
+  if (ids.length === 0) return rows;
+
+  const { data } = await supabase.from("profiles").select("id, full_name, avatar_url").in("id", ids);
+  const byId = new Map((data ?? []).map((profile) => [profile.id, profile]));
+
+  return rows.map((row) => ({
+    ...row,
+    profiles: row.profiles ?? byId.get(row.user_id) ?? null,
+  }));
+}
+
+async function selectPosts(supabase: ReturnType<typeof createClient>) {
+  const columnSets = [
+    "id, user_id, content, media_url, media_type, category, tags, created_at",
+    "id, user_id, content, category, tags, created_at",
+    "id, user_id, content, created_at",
+    "id, user_id, caption, media_url, media_type, category, tags, created_at",
+    "id, user_id, caption, created_at",
+  ];
+  let lastMessage = "The live feed could not be loaded.";
+
+  for (const columns of columnSets) {
+    const joined = await supabase
+      .from("posts")
+      .select(`${columns}, profiles(full_name, avatar_url)`)
+      .order("created_at", { ascending: false });
+
+    if (!joined.error) return (joined.data ?? []) as unknown as LoosePost[];
+
+    const plain = await supabase.from("posts").select(columns).order("created_at", { ascending: false });
+    if (!plain.error) return attachProfiles(supabase, (plain.data ?? []) as unknown as LoosePost[]);
+    lastMessage = plain.error.message;
   }
 
+  throw new Error(lastMessage);
+}
+
+type EngagementRow = { id?: string; post_id: string; user_id?: string };
+
+async function selectEngagement(
+  supabase: ReturnType<typeof createClient>,
+  tables: string[],
+  columns: string
+) {
+  for (const table of tables) {
+    const result = await supabase.from(table).select(columns);
+    if (!result.error) return (result.data ?? []) as unknown as EngagementRow[];
+    if (!missingRelation(result.error.message)) return [];
+  }
+  return [] as EngagementRow[];
+}
+
+export async function loadCommunity(): Promise<CommunitySnapshot> {
+  if (!getSupabaseEnv().isConfigured) {
+    return emptyFeed("Supabase is not configured.");
+  }
+
+  const supabase = createClient();
+
   try {
-    const supabase = createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
 
-    const [postsResult, eventsResult] = await Promise.all([
-      supabase.from("posts").select(postSelect).order("created_at", { ascending: false }),
+    const [rows, eventsResult, amens, commentRows, prayers] = await Promise.all([
+      selectPosts(supabase),
       supabase.from("live_events").select("id, title, details, stream_url, starts_at, ends_at").order("starts_at", { ascending: true }),
+      selectEngagement(supabase, ["post_amens", "likes"], "post_id, user_id"),
+      selectEngagement(supabase, ["post_comments", "comments"], "id, post_id"),
+      selectEngagement(supabase, ["prayers"], "post_id, user_id"),
     ]);
-
-    if (postsResult.error) throw postsResult.error;
 
     const events: LiveEvent[] =
       eventsResult.error || !eventsResult.data
@@ -114,23 +178,43 @@ export async function loadCommunity(): Promise<CommunitySnapshot> {
             startsAt: event.starts_at,
             endsAt: event.ends_at,
           }));
-    const isLiveActive = events.some((event) => isLiveEvent(event));
 
-    const posts = ((postsResult.data ?? []) as PostRow[]).map((row) => mapPost(row, user?.id));
+    const posts = rows.map((row) => {
+      const mapped = mapPost(
+        {
+          id: row.id,
+          user_id: row.user_id,
+          caption: row.content || row.caption || "",
+          media_url: row.media_url ?? null,
+          media_type: row.media_type ?? null,
+          category: row.category ?? "general",
+          tags: row.tags ?? [],
+          created_at: row.created_at,
+          profiles: row.profiles ?? null,
+          likes: amens
+            .filter((amen) => amen.post_id === row.id && amen.user_id)
+            .map((amen) => ({ user_id: amen.user_id as string })),
+          comments: commentRows
+            .filter((comment) => comment.post_id === row.id && comment.id)
+            .map((comment) => ({ id: comment.id as string })),
+          prayers: prayers
+            .filter((prayer) => prayer.post_id === row.id && prayer.user_id)
+            .map((prayer) => ({ user_id: prayer.user_id as string })),
+        },
+        user?.id
+      );
+      return mapped;
+    });
 
-    if (posts.length === 0) {
-      return {
-        posts: fallbackPosts(),
-        events,
-        isLiveActive,
-        mode: "preview",
-        notice: "No posts yet. Sample blessings are shown until the first testimony is shared.",
-      };
-    }
-
-    return { posts, events, isLiveActive, mode: "live", notice: null };
+    return {
+      posts,
+      events,
+      isLiveActive: events.some((event) => isLiveEvent(event)),
+      mode: "live",
+      notice: null,
+    };
   } catch {
-    return preview("Showing sample blessings until the live feed responds.");
+    return emptyFeed("The live feed could not be loaded.");
   }
 }
 
@@ -142,79 +226,98 @@ async function currentUserId() {
   return { supabase, userId: user?.id ?? null };
 }
 
-export async function toggleAmen(post: FeedPost): Promise<FeedPost> {
+export function optimisticAmen(post: FeedPost): FeedPost {
   const likedByMe = !post.likedByMe;
-  const next = {
+  return {
     ...post,
     likedByMe,
     amenCount: Math.max(0, post.amenCount + (likedByMe ? 1 : -1)),
   };
-
-  if (post.source === "preview" || !getSupabaseEnv().isConfigured) return next;
-
-  try {
-    const { supabase, userId } = await currentUserId();
-    if (!userId) return next;
-
-    const result = post.likedByMe
-      ? await supabase.from("likes").delete().eq("post_id", post.id).eq("user_id", userId)
-      : await supabase.from("likes").insert({ post_id: post.id, user_id: userId });
-
-    if (result.error) return next;
-    return next;
-  } catch {
-    return next;
-  }
 }
 
-export async function togglePrayer(post: FeedPost): Promise<FeedPost> {
+export function optimisticPrayer(post: FeedPost): FeedPost {
   const prayedByMe = !post.prayedByMe;
-  const next = {
+  return {
     ...post,
     prayedByMe,
     prayerCount: Math.max(0, post.prayerCount + (prayedByMe ? 1 : -1)),
   };
+}
 
-  if (post.source === "preview" || !getSupabaseEnv().isConfigured) return next;
+async function writeToggle(
+  tables: string[],
+  active: boolean,
+  postId: string
+) {
+  const { supabase, userId } = await currentUserId();
+  if (!userId) return false;
 
-  try {
-    const { supabase, userId } = await currentUserId();
-    if (!userId) return next;
+  for (const table of tables) {
+    const result = active
+      ? await supabase.from(table).delete().eq("post_id", postId).eq("user_id", userId)
+      : await supabase.from(table).insert({ post_id: postId, user_id: userId });
 
-    const result = post.prayedByMe
-      ? await supabase.from("prayers").delete().eq("post_id", post.id).eq("user_id", userId)
-      : await supabase.from("prayers").insert({ post_id: post.id, user_id: userId });
-
-    if (result.error) return next;
-    return next;
-  } catch {
-    return next;
+    if (!result.error) return true;
+    if (!missingRelation(result.error.message)) return false;
   }
+
+  return false;
+}
+
+export async function persistAmen(post: FeedPost) {
+  if (!getSupabaseEnv().isConfigured) return false;
+  return writeToggle(["post_amens", "likes"], post.likedByMe, post.id);
+}
+
+export async function persistPrayer(post: FeedPost) {
+  if (!getSupabaseEnv().isConfigured) return false;
+  return writeToggle(["prayers"], post.prayedByMe, post.id);
+}
+
+export async function toggleAmen(post: FeedPost) {
+  const next = optimisticAmen(post);
+  await persistAmen(post);
+  return next;
+}
+
+export async function togglePrayer(post: FeedPost) {
+  const next = optimisticPrayer(post);
+  await persistPrayer(post);
+  return next;
 }
 
 export async function loadComments(postId: string): Promise<FeedComment[]> {
-  if (!getSupabaseEnv().isConfigured || postId.startsWith("preview-")) return [];
+  if (!getSupabaseEnv().isConfigured) return [];
 
   try {
     const supabase = createClient();
-    const { data, error } = await supabase
-      .from("comments")
-      .select("id, post_id, content, created_at, profiles (full_name)")
-      .eq("post_id", postId)
-      .order("created_at", { ascending: true });
+    const tables = ["post_comments", "comments"];
 
-    if (error || !data) return [];
+    for (const table of tables) {
+      const { data, error } = await supabase
+        .from(table)
+        .select("id, post_id, content, created_at, profiles (full_name)")
+        .eq("post_id", postId)
+        .order("created_at", { ascending: true });
 
-    return data.map((row) => {
-      const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
-      return {
-        id: row.id,
-        postId: row.post_id,
-        fullName: profile?.full_name || "Blessing member",
-        content: row.content,
-        createdAt: row.created_at,
-      };
-    });
+      if (error) {
+        if (missingRelation(error.message)) continue;
+        return [];
+      }
+
+      return (data ?? []).map((row) => {
+        const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+        return {
+          id: row.id,
+          postId: row.post_id,
+          fullName: profile?.full_name || "Blessing member",
+          content: row.content,
+          createdAt: row.created_at,
+        };
+      });
+    }
+
+    return [];
   } catch {
     return [];
   }
@@ -222,53 +325,36 @@ export async function loadComments(postId: string): Promise<FeedComment[]> {
 
 export async function addComment(postId: string, content: string): Promise<FeedComment | null> {
   const text = content.trim();
-  if (!text) return null;
-
-  if (!getSupabaseEnv().isConfigured || postId.startsWith("preview-")) {
-    return {
-      id: `local-${Date.now()}`,
-      postId,
-      fullName: "You",
-      content: text,
-      createdAt: new Date().toISOString(),
-    };
-  }
+  if (!text || !getSupabaseEnv().isConfigured) return null;
 
   try {
     const { supabase, userId } = await currentUserId();
     if (!userId) return null;
 
-    const { data, error } = await supabase
-      .from("comments")
-      .insert({ post_id: postId, user_id: userId, content: text })
-      .select("id, post_id, content, created_at")
-      .single();
+    const tables = ["post_comments", "comments"];
+    for (const table of tables) {
+      const { data, error } = await supabase
+        .from(table)
+        .insert({ post_id: postId, user_id: userId, content: text })
+        .select("id, post_id, content, created_at")
+        .single();
 
-    if (error || !data) {
-      return {
-        id: `local-${Date.now()}`,
-        postId,
-        fullName: "You",
-        content: text,
-        createdAt: new Date().toISOString(),
-      };
+      if (!error && data) {
+        return {
+          id: data.id,
+          postId: data.post_id,
+          fullName: "You",
+          content: data.content,
+          createdAt: data.created_at,
+        };
+      }
+
+      if (error && !missingRelation(error.message)) return null;
     }
 
-    return {
-      id: data.id,
-      postId: data.post_id,
-      fullName: "You",
-      content: data.content,
-      createdAt: data.created_at,
-    };
+    return null;
   } catch {
-    return {
-      id: `local-${Date.now()}`,
-      postId,
-      fullName: "You",
-      content: text,
-      createdAt: new Date().toISOString(),
-    };
+    return null;
   }
 }
 
@@ -306,24 +392,33 @@ export async function createCommunityPost(input: {
     mediaType = input.file.type.startsWith("video") ? "video" : "image";
   }
 
-  const { error } = await supabase.from("posts").insert({
+  const text = input.content.trim();
+  const payload: Record<string, unknown> = {
     user_id: user.id,
-    caption: input.content.trim(),
+    content: text,
+    caption: text,
     category: input.category,
     tags: input.tags,
     media_url: mediaUrl,
     media_type: mediaType,
-  });
+  };
 
-  if (error) {
-    const missingColumn = /category|tags/i.test(error.message);
-    return {
-      ok: false as const,
-      message: missingColumn
-        ? "Run supabase/phase3.sql in the Supabase SQL editor, then try again."
-        : error.message,
-    };
+  let { error } = await supabase.from("posts").insert(payload);
+
+  for (let attempt = 0; attempt < 6 && error; attempt += 1) {
+    if (/caption/i.test(error.message)) delete payload.caption;
+    else if (/content/i.test(error.message)) {
+      delete payload.content;
+      payload.caption = text;
+    } else if (/category/i.test(error.message)) delete payload.category;
+    else if (/tags/i.test(error.message)) delete payload.tags;
+    else if (/media_url/i.test(error.message)) delete payload.media_url;
+    else if (/media_type/i.test(error.message)) delete payload.media_type;
+    else break;
+
+    ({ error } = await supabase.from("posts").insert(payload));
   }
 
+  if (error) return { ok: false as const, message: error.message };
   return { ok: true as const };
 }

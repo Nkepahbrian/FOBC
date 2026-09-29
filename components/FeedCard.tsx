@@ -1,20 +1,17 @@
 "use client";
 
-import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { HandHeart, Heart, MessageCircle, Share2 } from "lucide-react";
-import type { FeedComment, FeedPost } from "@/lib/feed/types";
+import type { FeedPost } from "@/lib/feed/types";
 import { categoryLabel, formatTimestamp } from "@/lib/feed/types";
 import { cn } from "@/lib/utils";
 
 type FeedCardProps = {
   post: FeedPost;
-  comments: FeedComment[];
   commentsOpen: boolean;
   onToggleComments: (postId: string) => void;
   onAmen: (postId: string) => void;
   onPray: (postId: string) => void;
-  onComment: (postId: string, content: string) => void;
   emphasizePrayer?: boolean;
 };
 
@@ -35,16 +32,12 @@ function initials(name: string) {
 
 export function FeedCard({
   post,
-  comments,
   commentsOpen,
   onToggleComments,
   onAmen,
   onPray,
-  onComment,
   emphasizePrayer = false,
 }: FeedCardProps) {
-  const [draft, setDraft] = useState("");
-
   async function share() {
     const url = `${window.location.origin}/feed?post=${post.id}`;
     const text = `${post.fullName} on FOBC: ${post.content}`;
@@ -57,13 +50,6 @@ export function FeedCard({
       }
     }
     window.open(`https://wa.me/?text=${encodeURIComponent(`${text} ${url}`)}`, "_blank", "noopener,noreferrer");
-  }
-
-  function submitComment(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!draft.trim()) return;
-    onComment(post.id, draft);
-    setDraft("");
   }
 
   const profileHref = `/profile/${post.userId}`;
@@ -160,30 +146,8 @@ export function FeedCard({
           )}
         >
           <HandHeart className="h-4 w-4" />
-          {post.prayedByMe ? `Prayed · ${post.prayerCount}` : `I Prayed For This · ${post.prayerCount}`}
+          {post.prayedByMe ? `Prayed · ${post.prayerCount}` : `I Prayed for This · ${post.prayerCount}`}
         </button>
-      ) : null}
-
-      {commentsOpen ? (
-        <div className="mt-4 space-y-3 border-t border-slate-100 pt-3">
-          {comments.length === 0 ? <p className="text-sm text-slate-500">No comments yet.</p> : null}
-          {comments.map((comment) => (
-            <p key={comment.id} className="text-sm leading-5 text-slate-700">
-              <span className="font-semibold text-[#0F172A]">{comment.fullName}</span> {comment.content}
-            </p>
-          ))}
-          <form onSubmit={submitComment} className="flex gap-2">
-            <input
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder="Write a blessing..."
-              className="h-11 flex-1 rounded-full border border-slate-200 px-4 text-sm outline-none ring-[#F59E0B] focus:ring-2"
-            />
-            <button type="submit" className="h-11 rounded-full bg-[#0F172A] px-4 text-sm font-semibold text-white">
-              Send
-            </button>
-          </form>
-        </div>
       ) : null}
     </article>
   );

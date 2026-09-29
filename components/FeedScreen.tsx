@@ -4,9 +4,19 @@ import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { FeedCard } from "@/components/FeedCard";
 import { FeedHeader } from "@/components/FeedHeader";
+import { CommentDrawer } from "@/components/CommentDrawer";
 import { LiveEventBanner } from "@/components/LiveEventBanner";
 import { PrayerWall } from "@/components/PrayerWall";
-import { addComment, loadComments, loadCommunity, toggleAmen, togglePrayer, type CommunitySnapshot } from "@/lib/feed/api";
+import {
+  addComment,
+  loadComments,
+  loadCommunity,
+  optimisticAmen,
+  optimisticPrayer,
+  persistAmen,
+  persistPrayer,
+  type CommunitySnapshot,
+} from "@/lib/feed/api";
 import type { FeedComment } from "@/lib/feed/types";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
@@ -36,10 +46,19 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
       .on("postgres_changes", { event: "*", schema: "public", table: "posts" }, () => {
         refresh();
       })
-      .on("postgres_changes", { event: "*", schema: "public", table: "prayers" }, () => {
+      .on("postgres_changes", { event: "*", schema: "public", table: "post_amens" }, () => {
         refresh();
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "likes" }, () => {
+        refresh();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "post_comments" }, () => {
+        refresh();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "comments" }, () => {
+        refresh();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "prayers" }, () => {
         refresh();
       })
       .subscribe();
@@ -60,13 +79,17 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
   async function onAmen(postId: string) {
     const post = snapshot?.posts.find((item) => item.id === postId);
     if (!post) return;
-    replacePost(postId, await toggleAmen(post));
+    replacePost(postId, optimisticAmen(post));
+    const saved = await persistAmen(post);
+    if (!saved) replacePost(postId, post);
   }
 
   async function onPray(postId: string) {
     const post = snapshot?.posts.find((item) => item.id === postId);
     if (!post) return;
-    replacePost(postId, await togglePrayer(post));
+    replacePost(postId, optimisticPrayer(post));
+    const saved = await persistPrayer(post);
+    if (!saved) replacePost(postId, post);
   }
 
   async function onToggleComments(postId: string) {
@@ -77,11 +100,16 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
   }
 
   async function onComment(postId: string, content: string) {
-    const comment = await addComment(postId, content);
-    if (!comment) return;
+    const pending = {
+      id: `local-${Date.now()}`,
+      postId,
+      fullName: "You",
+      content: content.trim(),
+      createdAt: new Date().toISOString(),
+    };
     setCommentsByPost((current) => ({
       ...current,
-      [postId]: [...(current[postId] ?? []), comment],
+      [postId]: [...(current[postId] ?? []), pending],
     }));
     setSnapshot((current) =>
       current
@@ -93,9 +121,35 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
           }
         : current
     );
+
+    const comment = await addComment(postId, content);
+    if (!comment) {
+      setCommentsByPost((current) => ({
+        ...current,
+        [postId]: (current[postId] ?? []).filter((item) => item.id !== pending.id),
+      }));
+      setSnapshot((current) =>
+        current
+          ? {
+              ...current,
+              posts: current.posts.map((post) =>
+                post.id === postId ? { ...post, commentCount: Math.max(0, post.commentCount - 1) } : post
+              ),
+            }
+          : current
+      );
+      return;
+    }
+
+    setCommentsByPost((current) => ({
+      ...current,
+      [postId]: (current[postId] ?? []).map((item) => (item.id === pending.id ? comment : item)),
+    }));
   }
 
   const isLiveActive = snapshot?.isLiveActive ?? false;
+  const blessings = snapshot?.posts.filter((post) => post.category !== "prayer_request") ?? [];
+  const openPost = snapshot?.posts.find((post) => post.id === openComments) ?? null;
 
   return (
     <div className="-mx-5 -mt-8">
@@ -132,7 +186,10 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
 
         {snapshot && tab === "feed" ? (
           <div className="-mx-4 divide-y divide-slate-100">
-            {snapshot.posts.map((post, index) => (
+            {blessings.length === 0 ? (
+              <p className="px-4 text-sm text-slate-500">No testimonies yet. Share a blessing with the community.</p>
+            ) : null}
+            {blessings.map((post, index) => (
               <motion.div
                 key={post.id}
                 initial={{ opacity: 0, y: 8 }}
@@ -141,12 +198,10 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
               >
                 <FeedCard
                   post={post}
-                  comments={commentsByPost[post.id] ?? []}
                   commentsOpen={openComments === post.id}
                   onToggleComments={onToggleComments}
                   onAmen={onAmen}
                   onPray={onPray}
-                  onComment={onComment}
                 />
               </motion.div>
             ))}
@@ -156,15 +211,19 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
         {snapshot && tab === "prayer" ? (
           <PrayerWall
             posts={snapshot.posts}
-            commentsByPost={commentsByPost}
             openComments={openComments}
             onToggleComments={onToggleComments}
             onAmen={onAmen}
             onPray={onPray}
-            onComment={onComment}
           />
         ) : null}
       </div>
+      <CommentDrawer
+        post={openPost}
+        comments={openComments ? commentsByPost[openComments] ?? [] : []}
+        onClose={() => setOpenComments(null)}
+        onComment={onComment}
+      />
     </div>
   );
 }

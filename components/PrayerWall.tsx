@@ -1,26 +1,22 @@
 "use client";
 
 import { FeedCard } from "@/components/FeedCard";
-import type { FeedComment, FeedPost } from "@/lib/feed/types";
+import type { FeedPost } from "@/lib/feed/types";
 
 type PrayerWallProps = {
   posts: FeedPost[];
-  commentsByPost: Record<string, FeedComment[]>;
   openComments: string | null;
   onToggleComments: (postId: string) => void;
   onAmen: (postId: string) => void;
   onPray: (postId: string) => void;
-  onComment: (postId: string, content: string) => void;
 };
 
 export function PrayerWall({
   posts,
-  commentsByPost,
   openComments,
   onToggleComments,
   onAmen,
   onPray,
-  onComment,
 }: PrayerWallProps) {
   const requests = posts.filter((post) => post.category === "prayer_request");
 
@@ -41,12 +37,10 @@ export function PrayerWall({
           key={post.id}
           post={post}
           emphasizePrayer
-          comments={commentsByPost[post.id] ?? []}
           commentsOpen={openComments === post.id}
           onToggleComments={onToggleComments}
           onAmen={onAmen}
           onPray={onPray}
-          onComment={onComment}
         />
       ))}
       </div>
