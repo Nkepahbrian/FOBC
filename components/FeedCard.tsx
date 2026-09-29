@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import Link from "next/link";
 import { HandHeart, Heart, MessageCircle, Share2 } from "lucide-react";
 import type { FeedComment, FeedPost } from "@/lib/feed/types";
 import { categoryLabel, formatTimestamp } from "@/lib/feed/types";
@@ -65,32 +66,38 @@ export function FeedCard({
     setDraft("");
   }
 
+  const profileHref = `/profile/${post.userId}`;
+
   return (
-    <article id={`post-${post.id}`} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-      <header className="flex items-start gap-3">
-        {post.avatarUrl ? (
-          // Supabase storage URLs are not registered with next/image.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={post.avatarUrl} alt="" className="h-11 w-11 rounded-full object-cover" />
-        ) : (
-          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[#0F172A] text-sm font-semibold text-[#FBBF24]">
-            {initials(post.fullName)}
-          </span>
-        )}
+    <article id={`post-${post.id}`} className="bg-white px-4 py-3">
+      <header className="flex items-center gap-3">
+        <Link href={profileHref} className="shrink-0" aria-label={post.fullName}>
+          {post.avatarUrl ? (
+            // Supabase storage URLs are not registered with next/image.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={post.avatarUrl} alt="" className="h-10 w-10 rounded-full object-cover" />
+          ) : (
+            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#0F172A] text-xs font-semibold text-[#FBBF24]">
+              {initials(post.fullName)}
+            </span>
+          )}
+        </Link>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
-            <p className="truncate font-semibold text-[#0F172A]">{post.fullName}</p>
+            <Link href={profileHref} className="truncate text-sm font-semibold text-[#0F172A]">
+              {post.fullName}
+            </Link>
             <time className="shrink-0 text-xs text-slate-500" dateTime={post.createdAt}>
               {formatTimestamp(post.createdAt)}
             </time>
           </div>
-          <span className={cn("mt-1 inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold", badgeClass[post.category])}>
+          <span className={cn("mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold", badgeClass[post.category])}>
             {categoryLabel(post.category)}
           </span>
         </div>
       </header>
 
-      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">{post.content}</p>
+      <p className="mt-3 whitespace-pre-wrap text-[15px] leading-6 text-[#0F172A]">{post.content}</p>
 
       {post.mediaUrl && post.mediaType === "video" ? (
         <video src={post.mediaUrl} controls playsInline className="mt-3 max-h-80 w-full rounded-2xl bg-[#0F172A]" />
@@ -110,34 +117,34 @@ export function FeedCard({
         </ul>
       ) : null}
 
-      <div className="mt-4 grid grid-cols-3 gap-2">
+      <div className="mt-3 flex items-center gap-1">
         <button
           type="button"
           onClick={() => onAmen(post.id)}
           aria-pressed={post.likedByMe}
           className={cn(
-            "flex h-10 items-center justify-center gap-1.5 rounded-full text-sm font-semibold",
-            post.likedByMe ? "bg-[#F59E0B] text-[#0F172A]" : "bg-slate-100 text-slate-600"
+            "flex h-10 items-center gap-1.5 rounded-full px-3 text-sm font-semibold",
+            post.likedByMe ? "text-[#B45309]" : "text-slate-600"
           )}
         >
-          <Heart className={cn("h-4 w-4", post.likedByMe && "fill-current")} />
+          <Heart className={cn("h-5 w-5", post.likedByMe && "fill-[#F59E0B] text-[#F59E0B]")} />
           Amen {post.amenCount}
         </button>
         <button
           type="button"
           onClick={() => onToggleComments(post.id)}
           aria-expanded={commentsOpen}
-          className="flex h-10 items-center justify-center gap-1.5 rounded-full bg-slate-100 text-sm font-semibold text-slate-600"
+          className="flex h-10 items-center gap-1.5 rounded-full px-3 text-sm font-semibold text-slate-600"
         >
-          <MessageCircle className="h-4 w-4" />
+          <MessageCircle className="h-5 w-5" />
           {post.commentCount}
         </button>
         <button
           type="button"
           onClick={share}
-          className="flex h-10 items-center justify-center gap-1.5 rounded-full bg-slate-100 text-sm font-semibold text-slate-600"
+          className="flex h-10 items-center gap-1.5 rounded-full px-3 text-sm font-semibold text-slate-600"
         >
-          <Share2 className="h-4 w-4" />
+          <Share2 className="h-5 w-5" />
           Share
         </button>
       </div>

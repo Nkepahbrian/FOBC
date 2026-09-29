@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import { motion } from "framer-motion";
 import { FeedCard } from "@/components/FeedCard";
+import { FeedHeader } from "@/components/FeedHeader";
 import { LiveEventBanner } from "@/components/LiveEventBanner";
 import { PrayerWall } from "@/components/PrayerWall";
 import { addComment, loadComments, loadCommunity, toggleAmen, togglePrayer, type CommunitySnapshot } from "@/lib/feed/api";
@@ -95,20 +95,13 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
     );
   }
 
+  const isLiveActive = snapshot?.isLiveActive ?? false;
+
   return (
     <div className="-mx-5 -mt-8">
-      <LiveEventBanner events={snapshot?.events ?? []} />
-      <div className="space-y-4 px-5 py-4">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#F59E0B]">Community</p>
-            <h1 className="text-3xl font-semibold tracking-tight text-[#0F172A]">Feed</h1>
-          </div>
-          <Link href="/create" className="text-sm font-semibold text-[#B45309]">
-            New post
-          </Link>
-        </div>
-
+      <FeedHeader />
+      <LiveEventBanner events={snapshot?.events ?? []} isLiveActive={isLiveActive} />
+      <div className="space-y-4 px-4 py-3">
         <div className="grid grid-cols-2 rounded-full bg-slate-100 p-1">
           {(
             [
@@ -138,7 +131,7 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
         {!snapshot ? <p className="text-sm text-slate-500">Loading blessings...</p> : null}
 
         {snapshot && tab === "feed" ? (
-          <div className="space-y-4">
+          <div className="-mx-4 divide-y divide-slate-100">
             {snapshot.posts.map((post, index) => (
               <motion.div
                 key={post.id}

@@ -35,6 +35,7 @@ export function PrayerWall({
             : `${requests.length} request${requests.length === 1 ? "" : "s"} waiting for prayer.`}
         </p>
       </div>
+      <div className="-mx-4 divide-y divide-slate-100">
       {requests.map((post) => (
         <FeedCard
           key={post.id}
@@ -48,6 +49,7 @@ export function PrayerWall({
           onComment={onComment}
         />
       ))}
+      </div>
     </section>
   );
 }

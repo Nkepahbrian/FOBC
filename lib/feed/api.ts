@@ -1,12 +1,13 @@
-import { fallbackEvents, fallbackPosts } from "@/lib/feed/mock";
+import { fallbackPosts } from "@/lib/feed/mock";
 import type { CreateCategory, FeedComment, FeedPost, LiveEvent, PostCategory } from "@/lib/feed/types";
-import { postCategories } from "@/lib/feed/types";
+import { isLiveEvent, postCategories } from "@/lib/feed/types";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
 export type CommunitySnapshot = {
   posts: FeedPost[];
   events: LiveEvent[];
+  isLiveActive: boolean;
   mode: "live" | "preview";
   notice: string | null;
 };
@@ -77,7 +78,8 @@ function mapPost(row: PostRow, userId?: string): FeedPost {
 function preview(notice: string): CommunitySnapshot {
   return {
     posts: fallbackPosts(),
-    events: fallbackEvents(),
+    events: [],
+    isLiveActive: false,
     mode: "preview",
     notice,
   };
@@ -102,8 +104,8 @@ export async function loadCommunity(): Promise<CommunitySnapshot> {
     if (postsResult.error) throw postsResult.error;
 
     const events: LiveEvent[] =
-      eventsResult.error || !eventsResult.data?.length
-        ? fallbackEvents()
+      eventsResult.error || !eventsResult.data
+        ? []
         : eventsResult.data.map((event) => ({
             id: event.id,
             title: event.title,
@@ -112,6 +114,7 @@ export async function loadCommunity(): Promise<CommunitySnapshot> {
             startsAt: event.starts_at,
             endsAt: event.ends_at,
           }));
+    const isLiveActive = events.some((event) => isLiveEvent(event));
 
     const posts = ((postsResult.data ?? []) as PostRow[]).map((row) => mapPost(row, user?.id));
 
@@ -119,12 +122,13 @@ export async function loadCommunity(): Promise<CommunitySnapshot> {
       return {
         posts: fallbackPosts(),
         events,
+        isLiveActive,
         mode: "preview",
         notice: "No posts yet. Sample blessings are shown until the first testimony is shared.",
       };
     }
 
-    return { posts, events, mode: "live", notice: null };
+    return { posts, events, isLiveActive, mode: "live", notice: null };
   } catch {
     return preview("Showing sample blessings until the live feed responds.");
   }
