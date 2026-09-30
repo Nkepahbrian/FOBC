@@ -2,9 +2,12 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ImagePlus, MapPin, Music2, Pause, Play, Search, UserPlus, X } from "lucide-react";
+import { ImagePlus, Loader2, MapPin, Music2, Pause, Play, Search, UserPlus, X } from "lucide-react";
 import { buildSnippet, extractVideoSound } from "@/lib/audio/snippet";
 import { feelings, filterPlaces, filterTracks } from "@/lib/create/catalog";
+
+type PlaceHit = { label: string; value: string };
+type ClipLength = 15 | 25;
 import { createCommunityPost } from "@/lib/feed/api";
 import type { CreateCategory } from "@/lib/feed/types";
 import { createClient } from "@/lib/supabase/client";
@@ -36,7 +39,14 @@ export function CreatePostModal() {
   const [previewing, setPreviewing] = useState(false);
   const [duration, setDuration] = useState(0);
   const [trimStart, setTrimStart] = useState(0);
+  const [clipLength, setClipLength] = useState<ClipLength>(15);
+  const [appliedStart, setAppliedStart] = useState<number | null>(null);
+  const [peaks, setPeaks] = useState<number[]>([]);
+  const [remotePlaces, setRemotePlaces] = useState<PlaceHit[]>([]);
+  const [suggesting, setSuggesting] = useState(false);
+  const [toast, setToast] = useState(false);
   const previewRef = useRef<HTMLAudioElement | null>(null);
+  const autoplayRef = useRef(false);
   const [songTitle, setSongTitle] = useState("");
   const [songArtist, setSongArtist] = useState("");
   const [location, setLocation] = useState("");
@@ -98,27 +108,100 @@ export function CreatePostModal() {
   useEffect(() => {
     setPreviewing(false);
     setTrimStart(0);
+    setAppliedStart(null);
     previewRef.current?.pause();
     if (!previewUrl) {
       setDuration(0);
+      setPeaks([]);
       return;
     }
     const probe = new Audio(previewUrl);
     const onMeta = () => setDuration(Number.isFinite(probe.duration) ? probe.duration : 0);
     probe.addEventListener("loadedmetadata", onMeta);
-    return () => probe.removeEventListener("loadedmetadata", onMeta);
+    const player = previewRef.current;
+    if (player && autoplayRef.current) {
+      player.src = previewUrl;
+      player.currentTime = 0;
+      player.play().then(() => setPreviewing(true)).catch(() => setPreviewing(false));
+      autoplayRef.current = false;
+    }
+    let cancelled = false;
+    const context = new AudioContext();
+    fetch(previewUrl)
+      .then((response) => response.arrayBuffer())
+      .then((buffer) => context.decodeAudioData(buffer))
+      .then((buffer) => {
+        if (cancelled) return;
+        const raw = buffer.getChannelData(0);
+        const bars = 42;
+        const size = Math.max(1, Math.floor(raw.length / bars));
+        const next = Array.from({ length: bars }, (_, index) => {
+          let max = 0;
+          for (let sample = 0; sample < size; sample += 48) max = Math.max(max, Math.abs(raw[index * size + sample] || 0));
+          return max;
+        });
+        const peak = Math.max(...next, 0.01);
+        setPeaks(next.map((value) => value / peak));
+      })
+      .catch(() => {
+        if (!cancelled) setPeaks([]);
+      })
+      .finally(() => {
+        context.close().catch(() => undefined);
+      });
+    return () => {
+      cancelled = true;
+      probe.removeEventListener("loadedmetadata", onMeta);
+    };
   }, [previewUrl]);
 
+  useEffect(() => {
+    const query = location.trim();
+    if (!suggesting || query.length < 2) {
+      setRemotePlaces([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=6&q=${encodeURIComponent(query)}`, {
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) return;
+        const rows = (await response.json()) as { display_name?: string }[];
+        const hits = rows
+          .map((row) => {
+            const label = row.display_name?.trim() || "";
+            const value = label.split(",")[0]?.trim() || "";
+            return label && value ? { label, value } : null;
+          })
+          .filter((hit): hit is PlaceHit => Boolean(hit));
+        setRemotePlaces(hits);
+      } catch {
+        if (!controller.signal.aborted) setRemotePlaces([]);
+      }
+    }, 450);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [location, suggesting]);
+
   const matches = filterTracks(soundQuery);
-  const placeMatches = filterPlaces(location);
+  const localPlaces = filterPlaces(location).map((place) => ({ label: place, value: place }));
+  const placeMatches = [
+    ...localPlaces,
+    ...remotePlaces.filter((place) => !localPlaces.some((local) => local.value.toLowerCase() === place.value.toLowerCase())),
+  ];
   const videoFile = files.find((file) => file.type.startsWith("video")) ?? null;
-  const trimMax = Math.max(0, duration - 15);
+  const trimMax = Math.max(0, duration - clipLength);
 
   function togglePreview() {
     const player = previewRef.current;
     if (!player) return;
     if (player.paused) {
-      player.currentTime = trimStart;
+      player.currentTime = appliedStart ?? trimStart;
       player.play().then(() => setPreviewing(true)).catch(() => setPreviewing(false));
     } else {
       player.pause();
@@ -137,12 +220,32 @@ export function CreatePostModal() {
     setFiles((current) => [...current, ...next].slice(0, 10));
   }
 
+  function eventLabel(program: string) {
+    return /^the\s/i.test(program) ? program : `the ${program}`;
+  }
+
   function checkInLine() {
+    const place = location.trim();
+    const program = programName.trim();
+    if (place && activity === "church" && program) return `${firstName} is in ${place} at ${eventLabel(program)}`;
+    if (place && activity === "birthday") return `${firstName} is in ${place} celebrating a birthday`;
+    if (place && activity === "testimony") return `${firstName} is in ${place} sharing a testimony`;
+    if (place && activity === "feeling") return `${firstName} is in ${place} feeling ${feeling}`;
+    if (place) return `${firstName} is in ${place}`;
+    if (activity === "church" && program) return `${firstName} is at ${eventLabel(program)}`;
     if (activity === "birthday") return `${firstName} is celebrating a birthday`;
     if (activity === "testimony") return `${firstName} shared a testimony`;
-    if (activity === "church" && programName.trim()) return `${firstName} is at ${programName.trim()}`;
     if (activity === "feeling") return `${firstName} is feeling ${feeling}`;
     return "";
+  }
+
+  function applySnippet() {
+    const start = Math.min(trimStart, trimMax);
+    setAppliedStart(start);
+    const player = previewRef.current;
+    if (!player) return;
+    player.currentTime = start;
+    player.play().then(() => setPreviewing(true)).catch(() => setPreviewing(false));
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -167,18 +270,17 @@ export function CreatePostModal() {
     setPending(true);
     let snippet = audio;
     const source = audio || presetUrl;
+    const snippetStart = appliedStart ?? Math.min(trimStart, trimMax);
     if (source) {
       try {
-        snippet = await buildSnippet(source, trimStart);
+        snippet = await buildSnippet(source, snippetStart, clipLength);
       } catch (trimError) {
         setPending(false);
-        setError(trimError instanceof Error ? trimError.message : "The 15-second snippet could not be prepared.");
+        setError(trimError instanceof Error ? trimError.message : "The audio snippet could not be prepared.");
         return;
       }
     }
 
-    const activityLine = checkInLine();
-    const place = location.trim();
     const result = await createCommunityPost({
       category,
       content,
@@ -188,15 +290,20 @@ export function CreatePostModal() {
       songTitle,
       songArtist,
       audioUrl: snippet ? null : presetUrl || null,
-      location: [place, activityLine].filter(Boolean).join(" · "),
+      location: checkInLine(),
       taggedUserIds: tagged.map((friend) => friend.id),
+      songSnippetStart: source ? snippetStart : null,
     });
     setPending(false);
     if (!result.ok) {
       setError(result.message || "The post could not be shared.");
       return;
     }
-    router.push("/feed");
+    window.sessionStorage.setItem("fobc-just-shared", result.id || "latest");
+    window.dispatchEvent(new Event("fobc-post-shared"));
+    setToast(true);
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    router.push(`/feed?shared=${Date.now()}`);
     router.refresh();
   }
 
@@ -279,6 +386,7 @@ export function CreatePostModal() {
                     setPresetUrl(track.url);
                     setAudio(null);
                     setSoundQuery("");
+                    autoplayRef.current = Boolean(track.url);
                   }}
                   className={cn("flex w-full items-center justify-between py-2 text-left text-sm", songTitle === track.title && songArtist === track.artist ? "text-[#EAB308]" : "text-white")}
                 >
@@ -300,7 +408,10 @@ export function CreatePostModal() {
               onChange={(event) => {
                 const next = event.target.files?.[0] ?? null;
                 setAudio(next);
-                if (next) setPresetUrl("");
+                if (next) {
+                  setPresetUrl("");
+                  autoplayRef.current = true;
+                }
               }}
             />
           </label>
@@ -312,7 +423,7 @@ export function CreatePostModal() {
                 setExtracting(true);
                 setError("");
                 try {
-                  const extracted = await extractVideoSound(videoFile, trimStart);
+                  const extracted = await extractVideoSound(videoFile, appliedStart ?? trimStart, clipLength);
                   setAudio(extracted);
                   setPresetUrl("");
                   if (!songTitle) {
@@ -330,6 +441,27 @@ export function CreatePostModal() {
               {extracting ? "Extracting sound..." : "Extract sound from video"}
             </button>
           ) : null}
+          <audio
+            ref={previewRef}
+            src={previewUrl || undefined}
+            preload="auto"
+            onTimeUpdate={() => {
+              const player = previewRef.current;
+              if (!player || appliedStart === null) return;
+              const end = appliedStart + clipLength;
+              if (player.currentTime >= end || player.currentTime < appliedStart) player.currentTime = appliedStart;
+            }}
+            onEnded={() => {
+              const player = previewRef.current;
+              if (player && appliedStart !== null) {
+                player.currentTime = appliedStart;
+                player.play().catch(() => setPreviewing(false));
+                return;
+              }
+              setPreviewing(false);
+            }}
+            className="hidden"
+          />
           {previewUrl ? (
             <div className="mt-3">
               <div className="flex items-center gap-3 rounded-full bg-[#121212] px-2 py-2">
@@ -339,23 +471,31 @@ export function CreatePostModal() {
                 <p className="min-w-0 flex-1 truncate text-sm text-white">
                   {songTitle || "Preview"} {songArtist ? `· ${songArtist}` : ""}
                 </p>
-                <audio
-                  ref={previewRef}
-                  src={previewUrl}
-                  preload="metadata"
-                  onTimeUpdate={() => {
-                    const player = previewRef.current;
-                    if (player && player.currentTime > trimStart + 15) {
-                      player.pause();
-                      setPreviewing(false);
-                    }
-                  }}
-                  onEnded={() => setPreviewing(false)}
-                  className="hidden"
-                />
               </div>
-              <label className="mt-3 block text-xs text-zinc-400">
-                15-second snippet starts at {Math.floor(trimStart)}s
+              <div className="mt-3 flex gap-2">
+                {([15, 25] as const).map((length) => (
+                  <button
+                    key={length}
+                    type="button"
+                    aria-pressed={clipLength === length}
+                    onClick={() => {
+                      setClipLength(length);
+                      setTrimStart((current) => Math.min(current, Math.max(0, duration - length)));
+                    }}
+                    className={cn("h-8 rounded-full px-3 text-xs font-semibold", clipLength === length ? "bg-[#EAB308] text-black" : "bg-[#121212] text-zinc-300")}
+                  >
+                    {length}s
+                  </button>
+                ))}
+              </div>
+              <div className="relative mt-3 h-12">
+                <div className="flex h-full items-end gap-px" aria-hidden="true">
+                  {(peaks.length > 0 ? peaks : Array.from({ length: 42 }, () => 0.35)).map((peak, index, all) => {
+                    const second = duration > 0 ? (index / all.length) * duration : 0;
+                    const active = duration > 0 && second >= trimStart && second <= trimStart + clipLength;
+                    return <span key={index} className={cn("flex-1 rounded-sm", active ? "bg-[#EAB308]" : "bg-white/25")} style={{ height: `${Math.max(12, peak * 100)}%` }} />;
+                  })}
+                </div>
                 <input
                   type="range"
                   min={0}
@@ -364,12 +504,21 @@ export function CreatePostModal() {
                   value={Math.min(trimStart, trimMax || 0)}
                   aria-label="Trim sound"
                   onChange={(event) => setTrimStart(Number(event.target.value))}
-                  className="mt-2 w-full accent-[#EAB308]"
+                  className="absolute inset-0 w-full cursor-pointer opacity-0"
                 />
-              </label>
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <p className="text-xs text-zinc-400">
+                  {clipLength}s snippet starts at {Math.floor(trimStart)}s
+                  {appliedStart !== null ? ` · looping from ${Math.floor(appliedStart)}s` : ""}
+                </p>
+                <button type="button" onClick={applySnippet} className="h-8 shrink-0 rounded-full bg-white px-3 text-xs font-semibold text-black">
+                  Apply
+                </button>
+              </div>
             </div>
           ) : songTitle ? (
-            <p className="mt-3 text-xs text-zinc-400">Upload the track, or extract it from a video, to play a 15-second snippet.</p>
+            <p className="mt-3 text-xs text-zinc-400">Upload the track, or extract it from a video, to play a snippet.</p>
           ) : null}
         </div>
 
@@ -380,17 +529,29 @@ export function CreatePostModal() {
           </p>
           <input
             value={location}
-            onChange={(event) => setLocation(event.target.value)}
+            onChange={(event) => {
+              setSuggesting(true);
+              setLocation(event.target.value);
+            }}
             placeholder="Search a place"
             aria-label="Location"
             className="mt-2 h-11 w-full rounded-full border border-white/10 bg-black px-4 text-sm outline-none"
           />
-          {location.trim() && placeMatches.length > 0 ? (
-            <ul className="mt-2 rounded-2xl bg-black">
+          {suggesting && location.trim().length >= 2 && placeMatches.length > 0 ? (
+            <ul className="mt-2 max-h-40 overflow-y-auto rounded-2xl bg-black">
               {placeMatches.map((place) => (
-                <li key={place}>
-                  <button type="button" onClick={() => setLocation(place)} className="w-full px-4 py-2 text-left text-sm">
-                    {place}
+                <li key={`${place.value}-${place.label}`}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLocation(place.value);
+                      setSuggesting(false);
+                      setRemotePlaces([]);
+                    }}
+                    className="w-full px-4 py-2 text-left text-sm"
+                  >
+                    <span className="block">{place.value}</span>
+                    {place.label !== place.value ? <span className="block truncate text-xs text-zinc-500">{place.label}</span> : null}
                   </button>
                 </li>
               ))}
@@ -473,9 +634,15 @@ export function CreatePostModal() {
 
         {error ? <p role="alert" className="mt-3 rounded-2xl bg-red-500/15 px-4 py-3 text-sm text-red-300">{error}</p> : null}
 
-        <button type="submit" disabled={pending} className="mt-4 flex h-12 items-center justify-center rounded-full bg-[#EAB308] text-sm font-semibold text-black disabled:opacity-60">
+        <button type="submit" disabled={pending} className="mt-4 flex h-12 items-center justify-center gap-2 rounded-full bg-[#EAB308] text-sm font-semibold text-black disabled:opacity-60">
+          {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
           {pending ? "Sharing..." : "Share with the community"}
         </button>
+        {toast ? (
+          <p role="status" className="fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-full bg-[#EAB308] px-4 py-2 text-sm font-semibold text-black shadow-lg">
+            Shared successfully!
+          </p>
+        ) : null}
       </form>
     </div>
   );

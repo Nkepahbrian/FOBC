@@ -46,10 +46,10 @@ export function MediaCarousel({
         {slides.map((slide) => (
           <div key={slide.url} className="h-full w-full shrink-0 snap-center">
             {slide.type === "video" ? (
-              <video src={slide.url} controls playsInline className="h-full w-full object-cover" />
+              <video src={slide.url} controls playsInline className="h-full w-full object-cover" style={{ objectFit: "cover" }} />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={slide.url} alt="" className="h-full w-full object-cover" />
+              <img src={slide.url} alt="" className="h-full w-full object-cover" style={{ objectFit: "cover" }} />
             )}
           </div>
         ))}

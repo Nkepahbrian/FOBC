@@ -32,7 +32,27 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
   const [hiddenIds, setHiddenIds] = useState<string[]>([]);
 
   const refresh = useCallback(async () => {
-    const next = await loadCommunity();
+    let next = await loadCommunity();
+    const sharedId = window.sessionStorage.getItem("fobc-just-shared");
+    if (sharedId) {
+      if (sharedId !== "latest" && !next.posts.some((post) => post.id === sharedId)) {
+        await new Promise((resolve) => window.setTimeout(resolve, 700));
+        next = await loadCommunity();
+      }
+      const index =
+        sharedId === "latest"
+          ? next.posts.reduce((best, post, postIndex, all) => {
+              if (best < 0) return postIndex;
+              return new Date(post.createdAt).getTime() > new Date(all[best].createdAt).getTime() ? postIndex : best;
+            }, -1)
+          : next.posts.findIndex((post) => post.id === sharedId);
+      if (index > 0) {
+        const posts = [...next.posts];
+        const [post] = posts.splice(index, 1);
+        next = { ...next, posts: [post, ...posts] };
+      }
+      window.sessionStorage.removeItem("fobc-just-shared");
+    }
     setSnapshot(next);
   }, []);
 

@@ -1,12 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Grid3X3, Clapperboard, UserSquare2 } from "lucide-react";
 import { Wordmark } from "@/components/Logo";
 import { readPackedAudio } from "@/lib/feed/api";
 import { createClient } from "@/lib/supabase/client";
-import { cn } from "@/lib/utils";
 
 type ProfilePost = {
   id: string;
@@ -40,19 +38,17 @@ function initials(name: string) {
 
 export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolean }) {
   const [profile, setProfile] = useState<ProfileModel | null>(null);
-  const [tab, setTab] = useState<"grid" | "reels" | "tagged">("grid");
   const [notice, setNotice] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = useCallback(async (cancelled: () => boolean) => {
     const supabase = createClient();
-
-    async function load() {
       const { data } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
       const row = (data ?? {}) as Record<string, string | null>;
       const name = row.full_name || (isOwn ? "Your profile" : "Community member");
 
       const postAttempts = [
+        "id, content, media_url, media_type, image_urls, tags, song_title, created_at",
         "id, content, media_url, media_type, tags, song_title, created_at",
         "id, content, created_at",
         "id, caption, created_at",
@@ -83,7 +79,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
       const followResult = await supabase.from("follows").select("id", { count: "exact", head: true }).eq("following_id", userId);
       if (!followResult.error) followers = followResult.count ?? 0;
 
-      if (cancelled) return;
+      if (cancelled()) return;
       setProfile({
         id: userId,
         fullName: name,
@@ -96,38 +92,40 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
         followers,
         grid: posts.map((post) => {
           const packed = readPackedAudio(String(post.content || post.caption || ""));
+          const images = Array.isArray(post.image_urls) ? (post.image_urls as string[]).filter(Boolean) : [];
+          const mediaUrl = images[0] || ((post.media_url as string | null) ?? null);
+          const mediaType = images[0] ? ((post.media_type as string | null) ?? "image") : ((post.media_type as string | null) ?? null);
           return {
             id: String(post.id),
             content: packed.content,
-            mediaUrl: (post.media_url as string | null) ?? null,
-            mediaType: (post.media_type as string | null) ?? null,
+            mediaUrl: mediaType === "audio" ? null : mediaUrl,
+            mediaType,
             tags: Array.isArray(post.tags) ? (post.tags as string[]) : [],
             songTitle: (post.song_title as string | null) ?? packed.songTitle,
           };
         }),
       });
-    }
+  }, [isOwn, userId]);
 
-    load().catch(() => {
+  useEffect(() => {
+    let cancelled = false;
+    load(() => cancelled).catch(() => {
       if (!cancelled) setNotice("This profile could not be loaded.");
     });
-
+    const refresh = () => setRefreshKey((current) => current + 1);
+    window.addEventListener("fobc-post-shared", refresh);
+    window.addEventListener("focus", refresh);
     return () => {
       cancelled = true;
+      window.removeEventListener("fobc-post-shared", refresh);
+      window.removeEventListener("focus", refresh);
     };
-  }, [isOwn, userId]);
+  }, [load, refreshKey]);
 
   const highlights = useMemo(() => {
     const tags = Array.from(new Set(profile?.grid.flatMap((post) => post.tags) ?? []));
     return (tags.length > 0 ? tags : ["Faith", "Worship", "Prayer", "Family"]).slice(0, 8);
   }, [profile]);
-
-  const visible = useMemo(() => {
-    const grid = profile?.grid ?? [];
-    if (tab === "reels") return grid.filter((post) => post.mediaType?.startsWith("video") || post.songTitle);
-    if (tab === "tagged") return [];
-    return grid;
-  }, [profile, tab]);
 
   async function shareProfile() {
     if (!profile) return;
@@ -216,47 +214,28 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
         ))}
       </div>
 
-      <div className="mt-2 grid grid-cols-3 border-t border-white/10">
-        {(
-          [
-            ["grid", Grid3X3, "Posts"],
-            ["reels", Clapperboard, "Reels"],
-            ["tagged", UserSquare2, "Tagged"],
-          ] as const
-        ).map(([value, Icon, label]) => (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={tab === value}
-            aria-label={label}
-            onClick={() => setTab(value)}
-            className={cn("flex h-11 items-center justify-center border-t-2", tab === value ? "border-[#EAB308] text-white" : "border-transparent text-zinc-500")}
-          >
-            <Icon className="h-5 w-5" />
-          </button>
-        ))}
+      <div className="mt-2 border-t border-white/10 pt-0.5">
+        {(profile.grid ?? []).length === 0 ? (
+          <p className="py-10 text-center text-sm text-zinc-400">No posts yet.</p>
+        ) : (
+          <div className="-mx-4 grid grid-cols-3 gap-0.5">
+            {profile.grid.map((post) => (
+              <Link key={post.id} href={`/feed?post=${post.id}`} className="aspect-square overflow-hidden bg-[#121212]">
+                {post.mediaUrl && post.mediaType?.startsWith("video") ? (
+                  <video src={post.mediaUrl} muted playsInline preload="metadata" className="h-full w-full object-cover" style={{ objectFit: "cover" }} />
+                ) : post.mediaUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={post.mediaUrl} alt="" className="h-full w-full object-cover" style={{ objectFit: "cover" }} />
+                ) : (
+                  <span className="flex h-full items-end p-2 text-left text-[11px] leading-4 text-zinc-300">
+                    {post.songTitle || post.content.slice(0, 80) || "Blessing"}
+                  </span>
+                )}
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
-
-      {tab === "tagged" ? (
-        <p className="py-10 text-center text-sm text-zinc-400">No tagged posts yet.</p>
-      ) : visible.length === 0 ? (
-        <p className="py-10 text-center text-sm text-zinc-400">Nothing in this tab yet.</p>
-      ) : (
-        <div className="-mx-4 grid grid-cols-3 gap-0.5">
-          {visible.map((post) => (
-            <Link key={post.id} href={`/feed?post=${post.id}`} className="aspect-square bg-[#121212]">
-              {post.mediaUrl && !post.mediaType?.startsWith("video") ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={post.mediaUrl} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <span className="flex h-full items-end p-2 text-left text-[11px] leading-4 text-zinc-300">
-                  {post.songTitle || post.content.slice(0, 80) || "Blessing"}
-                </span>
-              )}
-            </Link>
-          ))}
-        </div>
-      )}
     </section>
   );
 }

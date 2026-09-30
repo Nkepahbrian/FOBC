@@ -1,4 +1,4 @@
-const SNIPPET_SECONDS = 15;
+const DEFAULT_SNIPPET_SECONDS = 15;
 
 function writeString(view: DataView, offset: number, value: string) {
   for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
@@ -99,14 +99,15 @@ async function captureVideoSound(file: File, startSeconds: number, durationSecon
   }
 }
 
-export async function buildSnippet(source: File | string, startSeconds: number) {
+export async function buildSnippet(source: File | string, startSeconds: number, durationSeconds = DEFAULT_SNIPPET_SECONDS) {
   const context = new AudioContext();
+  const length = durationSeconds === 25 ? 25 : 15;
   try {
     const decoded = await decodeSource(context, source);
-    return audioBufferToWav(sliceAudioBuffer(context, decoded, startSeconds, SNIPPET_SECONDS));
+    return audioBufferToWav(sliceAudioBuffer(context, decoded, startSeconds, length));
   } catch (error) {
     if (typeof source !== "string" && source.type.startsWith("video")) {
-      return captureVideoSound(source, startSeconds, SNIPPET_SECONDS);
+      return captureVideoSound(source, startSeconds, length);
     }
     throw error instanceof Error ? error : new Error("The sound could not be trimmed.");
   } finally {
@@ -114,10 +115,11 @@ export async function buildSnippet(source: File | string, startSeconds: number) 
   }
 }
 
-export async function extractVideoSound(file: File, startSeconds: number) {
+export async function extractVideoSound(file: File, startSeconds: number, durationSeconds = DEFAULT_SNIPPET_SECONDS) {
+  const length = durationSeconds === 25 ? 25 : 15;
   try {
-    return await buildSnippet(file, startSeconds);
+    return await buildSnippet(file, startSeconds, length);
   } catch {
-    return captureVideoSound(file, startSeconds, SNIPPET_SECONDS);
+    return captureVideoSound(file, startSeconds, length);
   }
 }

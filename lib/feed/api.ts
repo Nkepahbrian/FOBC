@@ -479,6 +479,7 @@ export async function createCommunityPost(input: {
   audioUrl: string | null;
   location: string;
   taggedUserIds: string[];
+  songSnippetStart: number | null;
 }) {
   if (!getSupabaseEnv().isConfigured) {
     return { ok: false as const, message: "Supabase is not configured yet." };
@@ -498,7 +499,8 @@ export async function createCommunityPost(input: {
   for (const file of input.files) {
     const extension = file.name.split(".").pop()?.toLowerCase() || "jpg";
     const path = `${user.id}/${crypto.randomUUID()}.${extension}`;
-    const stored = await uploadStorage(supabase, ["posts", "music_tracks"], path, file, file.type || "image/jpeg");
+    const contentType = file.type || (/\.(mp4|webm|mov)$/i.test(file.name) ? "video/mp4" : "image/jpeg");
+    const stored = await uploadStorage(supabase, ["posts", "music_tracks"], path, file, contentType);
     if ("message" in stored) return { ok: false as const, message: stored.message };
     imageUrls.push(stored.url);
     if (!mediaUrl) {
@@ -538,6 +540,7 @@ export async function createCommunityPost(input: {
     song_artist: input.songArtist.trim() || null,
     song_url: audioUrl,
     audio_url: audioUrl,
+    song_snippet_start: input.songSnippetStart,
     tagged_user_ids: input.taggedUserIds,
   };
 
@@ -555,6 +558,7 @@ export async function createCommunityPost(input: {
     else if (/image_urls/i.test(message)) delete payload.image_urls;
     else if (/media_type/i.test(message)) delete payload.media_type;
     else if (/location/i.test(message)) delete payload.location;
+    else if (/song_snippet_start/i.test(message)) delete payload.song_snippet_start;
     else if (/song_title/i.test(message)) delete payload.song_title;
     else if (/song_artist/i.test(message)) delete payload.song_artist;
     else if (/audio_url/i.test(message)) delete payload.audio_url;
@@ -566,7 +570,9 @@ export async function createCommunityPost(input: {
   }
 
   if (error) return { ok: false as const, message: error.message };
-  return { ok: true as const };
+
+  const latest = await supabase.from("posts").select("id").eq("user_id", user.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  return { ok: true as const, id: latest.data?.id ?? null };
 }
 
 export async function updatePostContent(post: FeedPost, content: string) {
