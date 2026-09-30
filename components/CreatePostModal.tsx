@@ -136,7 +136,7 @@ export function CreatePostModal() {
   }
 
   return (
-    <div className="fixed inset-y-0 left-1/2 z-30 flex w-full max-w-md -translate-x-1/2 flex-col bg-black/70">
+    <div className="fixed inset-0 z-30 mx-auto flex h-dvh w-full max-w-lg flex-col bg-black/70">
       <form onSubmit={onSubmit} className="mt-6 flex min-h-0 flex-1 flex-col overflow-y-auto rounded-t-[2rem] bg-[#121212] px-5 pb-28 pt-4 text-white shadow-2xl">
         <div className="flex items-center justify-between">
           <div>

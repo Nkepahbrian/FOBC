@@ -9,12 +9,15 @@ import { LiveEventBanner } from "@/components/LiveEventBanner";
 import { PrayerWall } from "@/components/PrayerWall";
 import {
   addComment,
+  deletePost,
   loadComments,
   loadCommunity,
   optimisticAmen,
   optimisticPrayer,
   persistAmen,
   persistPrayer,
+  reportPost,
+  updatePostContent,
   type CommunitySnapshot,
 } from "@/lib/feed/api";
 import type { FeedComment } from "@/lib/feed/types";
@@ -25,6 +28,8 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
   const [snapshot, setSnapshot] = useState<CommunitySnapshot | null>(null);
   const [commentsByPost, setCommentsByPost] = useState<Record<string, FeedComment[]>>({});
   const [openComments, setOpenComments] = useState<string | null>(null);
+  const [viewerId, setViewerId] = useState<string | null>(null);
+  const [hiddenIds, setHiddenIds] = useState<string[]>([]);
 
   const refresh = useCallback(async () => {
     const next = await loadCommunity();
@@ -33,6 +38,8 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
 
   useEffect(() => {
     refresh();
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => setViewerId(data.user?.id ?? null));
   }, [refresh]);
 
   useEffect(() => {
@@ -146,10 +153,33 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
   }
 
   const isLiveActive = snapshot?.isLiveActive ?? false;
-  const visiblePosts =
-    initialTab === "prayer"
-      ? snapshot?.posts.filter((post) => post.category === "prayer_request") ?? []
-      : snapshot?.posts ?? [];
+  async function onSaveEdit(postId: string, content: string) {
+    const post = snapshot?.posts.find((item) => item.id === postId);
+    if (!post) return "This post is no longer on the feed.";
+    const message = await updatePostContent(post, content);
+    if (message) return message;
+    replacePost(postId, { ...post, content: content.trim() });
+    return null;
+  }
+
+  async function onDelete(postId: string) {
+    const message = await deletePost(postId);
+    if (message) return message;
+    setSnapshot((current) =>
+      current ? { ...current, posts: current.posts.filter((post) => post.id !== postId) } : current
+    );
+    return null;
+  }
+
+  function onHide(postId: string) {
+    setHiddenIds((current) => (current.includes(postId) ? current : [...current, postId]));
+  }
+
+  async function onReport(postId: string) {
+    return reportPost(postId);
+  }
+
+  const visiblePosts = (snapshot?.posts ?? []).filter((post) => !hiddenIds.includes(post.id));
   const openPost = snapshot?.posts.find((post) => post.id === openComments) ?? null;
 
   return (
@@ -165,11 +195,16 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
 
         {snapshot && initialTab === "prayer" ? (
           <PrayerWall
-            posts={snapshot.posts}
+            posts={visiblePosts}
+            viewerId={viewerId}
             openComments={openComments}
             onToggleComments={onToggleComments}
             onAmen={onAmen}
             onPray={onPray}
+            onSaveEdit={onSaveEdit}
+            onDelete={onDelete}
+            onHide={onHide}
+            onReport={onReport}
           />
         ) : null}
 
@@ -187,10 +222,15 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
               >
                 <FeedCard
                   post={post}
+                  viewerId={viewerId}
                   commentsOpen={openComments === post.id}
                   onToggleComments={onToggleComments}
                   onAmen={onAmen}
                   onPray={onPray}
+                  onSaveEdit={onSaveEdit}
+                  onDelete={onDelete}
+                  onHide={onHide}
+                  onReport={onReport}
                 />
               </motion.div>
             ))}

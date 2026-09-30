@@ -3,20 +3,16 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Bell, Search } from "lucide-react";
+import { Wordmark } from "@/components/Logo";
 
 export function FeedHeader() {
   const [notesOpen, setNotesOpen] = useState(false);
 
   return (
-    <header className="sticky top-0 z-30 border-b border-white/10 bg-black/90 backdrop-blur">
+    <header className="sticky top-0 z-30 border-b border-white/10 bg-black/90 pt-[env(safe-area-inset-top)] backdrop-blur">
       <div className="flex h-14 items-center justify-between gap-3 px-4">
-        <Link href="/feed" aria-label="FOBC home" className="min-w-0">
-          <span
-            className="block text-[2rem] leading-none tracking-tight text-white"
-            style={{ fontFamily: '"Segoe Script", "Brush Script MT", "Snell Roundhand", cursive' }}
-          >
-            FOBC
-          </span>
+        <Link href="/feed" aria-label="FOBC home" className="flex min-w-0 items-center gap-2">
+          <Wordmark className="text-[2rem]" />
         </Link>
         <div className="flex shrink-0 items-center text-white">
           <Link

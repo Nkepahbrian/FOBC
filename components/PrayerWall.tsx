@@ -5,18 +5,28 @@ import type { FeedPost } from "@/lib/feed/types";
 
 type PrayerWallProps = {
   posts: FeedPost[];
+  viewerId?: string | null;
   openComments: string | null;
   onToggleComments: (postId: string) => void;
   onAmen: (postId: string) => void;
   onPray: (postId: string) => void;
+  onSaveEdit: (postId: string, content: string) => Promise<string | null>;
+  onDelete: (postId: string) => Promise<string | null>;
+  onHide: (postId: string) => void;
+  onReport: (postId: string) => Promise<string | null>;
 };
 
 export function PrayerWall({
   posts,
+  viewerId,
   openComments,
   onToggleComments,
   onAmen,
   onPray,
+  onSaveEdit,
+  onDelete,
+  onHide,
+  onReport,
 }: PrayerWallProps) {
   const requests = posts.filter((post) => post.category === "prayer_request");
 
@@ -36,10 +46,15 @@ export function PrayerWall({
         <FeedCard
           key={post.id}
           post={post}
+          viewerId={viewerId}
           commentsOpen={openComments === post.id}
           onToggleComments={onToggleComments}
           onAmen={onAmen}
           onPray={onPray}
+          onSaveEdit={onSaveEdit}
+          onDelete={onDelete}
+          onHide={onHide}
+          onReport={onReport}
         />
       ))}
       </div>

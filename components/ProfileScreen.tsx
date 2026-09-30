@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Grid3X3, Clapperboard, UserSquare2 } from "lucide-react";
+import { Wordmark } from "@/components/Logo";
 import { readPackedAudio } from "@/lib/feed/api";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -149,6 +150,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
 
   return (
     <section className="px-4 pt-4 text-white">
+      <Wordmark className="text-3xl" />
       <div className="flex items-center gap-6">
         <div className="rounded-full bg-gradient-to-tr from-[#EAB308] via-[#FDE68A] to-[#EAB308] p-[3px]">
           {profile.avatarUrl ? (

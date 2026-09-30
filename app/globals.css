@@ -9,10 +9,28 @@
   --gold: #eab308;
 }
 
+html {
+  background: #000000;
+  min-height: 100%;
+}
+
 body {
   color: var(--foreground);
   background: var(--background);
   font-family: var(--font-geist-sans), "Segoe UI", sans-serif;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+.fobc-wordmark {
+  font-family: "Segoe Script", "Brush Script MT", "Snell Roundhand", cursive;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+  text-shadow: 0 2px 14px rgba(234, 179, 8, 0.45);
 }
 
 @layer utilities {

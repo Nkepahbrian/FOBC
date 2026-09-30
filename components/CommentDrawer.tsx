@@ -33,7 +33,7 @@ export function CommentDrawer({ post, comments, onClose, onComment }: CommentDra
         role="dialog"
         aria-modal="true"
         aria-label="Comments"
-        className="flex max-h-[78vh] w-full max-w-md flex-col rounded-t-[2rem] bg-[#121212] px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 text-white shadow-2xl"
+        className="flex max-h-[78dvh] w-full max-w-lg flex-col rounded-t-[2rem] bg-[#121212] px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 text-white shadow-2xl"
       >
         <div className="flex items-center justify-between">
           <div>

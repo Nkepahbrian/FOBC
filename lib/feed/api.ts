@@ -549,3 +549,47 @@ export async function createCommunityPost(input: {
   if (error) return { ok: false as const, message: error.message };
   return { ok: true as const };
 }
+
+export async function updatePostContent(post: FeedPost, content: string) {
+  const trimmed = content.trim();
+  if (trimmed.length < 2) return "Write a few words before saving.";
+
+  const text = packAudio(trimmed, post.audioUrl || post.songUrl, post.songTitle || "", post.songArtist || "");
+  const supabase = createClient();
+  const payload: Record<string, unknown> = { content: text, caption: text };
+  let { error } = await supabase.from("posts").update(payload).eq("id", post.id);
+
+  for (let attempt = 0; attempt < 4 && error; attempt += 1) {
+    const message = error.message;
+    if (/caption/i.test(message)) delete payload.caption;
+    else if (/content/i.test(message)) {
+      delete payload.content;
+      payload.caption = text;
+    } else break;
+    ({ error } = await supabase.from("posts").update(payload).eq("id", post.id));
+  }
+
+  return error ? error.message : null;
+}
+
+export async function deletePost(postId: string) {
+  const supabase = createClient();
+  const { error } = await supabase.from("posts").delete().eq("id", postId);
+  return error ? error.message : null;
+}
+
+export async function reportPost(postId: string) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return "Sign in to report a post.";
+
+  const { error } = await supabase.from("post_reports").insert({
+    post_id: postId,
+    user_id: user.id,
+    reason: "community",
+  });
+  if (error && missingRelation(error.message)) return null;
+  return error ? error.message : null;
+}
