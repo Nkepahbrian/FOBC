@@ -2,21 +2,18 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ImagePlus, MapPin, Music2, Pause, Play, UserPlus, X } from "lucide-react";
+import { ImagePlus, MapPin, Music2, Pause, Play, Search, UserPlus, X } from "lucide-react";
+import { buildSnippet, extractVideoSound } from "@/lib/audio/snippet";
+import { feelings, filterPlaces, filterTracks } from "@/lib/create/catalog";
 import { createCommunityPost } from "@/lib/feed/api";
 import type { CreateCategory } from "@/lib/feed/types";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { MediaCarousel, type CarouselSlide } from "@/components/MediaCarousel";
 
 const mediaTypes = ["image/jpeg", "image/png", "image/webp", "image/gif", "video/mp4", "video/webm", "video/quicktime"];
 const audioTypes = ["audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/webm", "audio/aac", "audio/x-m4a"];
 const audioExtensions = ["mp3", "wav", "m4a"];
-const tracks = [
-  { title: "Amazing Grace", artist: "Kevin MacLeod", url: "/music/amazing-grace.mp3" },
-  { title: "Agnus Dei", artist: "Kevin MacLeod", url: "/music/agnus-dei.mp3" },
-  { title: "Thaxted", artist: "Kevin MacLeod", url: "/music/thaxted.mp3" },
-];
-const places = ["Convention grounds", "Douala", "Yaoundé", "Cameroon"];
 const pills: { label: string; category: CreateCategory; tag: string }[] = [
   { label: "#Testimony", category: "testimony", tag: "Testimony" },
   { label: "#PrayerRequest", category: "prayer_request", tag: "PrayerRequest" },
@@ -24,26 +21,55 @@ const pills: { label: string; category: CreateCategory; tag: string }[] = [
 ];
 
 type Friend = { id: string; full_name: string | null };
+type Activity = "" | "birthday" | "testimony" | "church" | "feeling";
 
 export function CreatePostModal() {
   const router = useRouter();
   const [category, setCategory] = useState<CreateCategory>("testimony");
   const [content, setContent] = useState("");
   const [tags, setTags] = useState<string[]>(["Testimony"]);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [audio, setAudio] = useState<File | null>(null);
   const [presetUrl, setPresetUrl] = useState("");
+  const [soundQuery, setSoundQuery] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewing, setPreviewing] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [trimStart, setTrimStart] = useState(0);
   const previewRef = useRef<HTMLAudioElement | null>(null);
   const [songTitle, setSongTitle] = useState("");
   const [songArtist, setSongArtist] = useState("");
   const [location, setLocation] = useState("");
+  const [activity, setActivity] = useState<Activity>("");
+  const [programName, setProgramName] = useState("");
+  const [feeling, setFeeling] = useState<(typeof feelings)[number]>("Grateful");
+  const [firstName, setFirstName] = useState("Someone");
   const [friendQuery, setFriendQuery] = useState("");
   const [friends, setFriends] = useState<Friend[]>([]);
   const [tagged, setTagged] = useState<Friend[]>([]);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [slides, setSlides] = useState<CarouselSlide[]>([]);
+
+  useEffect(() => {
+    const next = files.map((file) => ({
+      url: URL.createObjectURL(file),
+      type: file.type.startsWith("video") ? ("video" as const) : ("image" as const),
+    }));
+    setSlides(next);
+    return () => next.forEach((slide) => URL.revokeObjectURL(slide.url));
+  }, [files]);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(async ({ data }) => {
+      if (!data.user) return;
+      const profile = await supabase.from("profiles").select("full_name").eq("id", data.user.id).maybeSingle();
+      const name = profile.data?.full_name?.trim().split(" ")[0];
+      if (name) setFirstName(name);
+    });
+  }, []);
 
   useEffect(() => {
     const trimmed = friendQuery.trim().replace(/[%_]/g, "");
@@ -71,13 +97,28 @@ export function CreatePostModal() {
 
   useEffect(() => {
     setPreviewing(false);
+    setTrimStart(0);
     previewRef.current?.pause();
+    if (!previewUrl) {
+      setDuration(0);
+      return;
+    }
+    const probe = new Audio(previewUrl);
+    const onMeta = () => setDuration(Number.isFinite(probe.duration) ? probe.duration : 0);
+    probe.addEventListener("loadedmetadata", onMeta);
+    return () => probe.removeEventListener("loadedmetadata", onMeta);
   }, [previewUrl]);
+
+  const matches = filterTracks(soundQuery);
+  const placeMatches = filterPlaces(location);
+  const videoFile = files.find((file) => file.type.startsWith("video")) ?? null;
+  const trimMax = Math.max(0, duration - 15);
 
   function togglePreview() {
     const player = previewRef.current;
     if (!player) return;
     if (player.paused) {
+      player.currentTime = trimStart;
       player.play().then(() => setPreviewing(true)).catch(() => setPreviewing(false));
     } else {
       player.pause();
@@ -90,6 +131,20 @@ export function CreatePostModal() {
     setTags([pill.tag]);
   }
 
+  function addFiles(list: FileList | null) {
+    if (!list) return;
+    const next = Array.from(list).filter((file) => mediaTypes.includes(file.type) || file.type.startsWith("image/") || file.type.startsWith("video/"));
+    setFiles((current) => [...current, ...next].slice(0, 10));
+  }
+
+  function checkInLine() {
+    if (activity === "birthday") return `${firstName} is celebrating a birthday`;
+    if (activity === "testimony") return `${firstName} shared a testimony`;
+    if (activity === "church" && programName.trim()) return `${firstName} is at ${programName.trim()}`;
+    if (activity === "feeling") return `${firstName} is feeling ${feeling}`;
+    return "";
+  }
+
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -97,38 +152,48 @@ export function CreatePostModal() {
       setError("Write a few words before sharing.");
       return;
     }
-    if (file && !mediaTypes.includes(file.type)) {
-      setError("Use a JPG, PNG, WEBP, GIF, MP4, WEBM, or MOV file.");
+    if (files.some((file) => file.size > 50 * 1024 * 1024) || (audio && audio.size > 20 * 1024 * 1024)) {
+      setError("Each photo or video must be under 50 MB and audio under 20 MB.");
       return;
     }
     if (audio) {
       const extension = audio.name.split(".").pop()?.toLowerCase() ?? "";
-      if (!audioExtensions.includes(extension) && audio.type && !audioTypes.includes(audio.type)) {
+      if (!audioExtensions.includes(extension) && !audio.type.startsWith("audio") && !audioTypes.includes(audio.type)) {
         setError("Use an MP3, WAV, or M4A audio file.");
         return;
       }
     }
-    if ((file && file.size > 50 * 1024 * 1024) || (audio && audio.size > 20 * 1024 * 1024)) {
-      setError("Media must be under 50 MB and audio under 20 MB.");
-      return;
-    }
 
     setPending(true);
+    let snippet = audio;
+    const source = audio || presetUrl;
+    if (source) {
+      try {
+        snippet = await buildSnippet(source, trimStart);
+      } catch (trimError) {
+        setPending(false);
+        setError(trimError instanceof Error ? trimError.message : "The 15-second snippet could not be prepared.");
+        return;
+      }
+    }
+
+    const activityLine = checkInLine();
+    const place = location.trim();
     const result = await createCommunityPost({
       category,
       content,
       tags,
-      file,
-      audio,
+      files,
+      audio: snippet,
       songTitle,
       songArtist,
-      audioUrl: audio ? null : presetUrl || null,
-      location,
+      audioUrl: snippet ? null : presetUrl || null,
+      location: [place, activityLine].filter(Boolean).join(" · "),
       taggedUserIds: tagged.map((friend) => friend.id),
     });
     setPending(false);
     if (!result.ok) {
-      setError(result.message);
+      setError(result.message || "The post could not be shared.");
       return;
     }
     router.push("/feed");
@@ -138,12 +203,10 @@ export function CreatePostModal() {
   return (
     <div className="fixed inset-0 z-30 mx-auto flex h-dvh w-full max-w-lg flex-col bg-black/70">
       <form onSubmit={onSubmit} className="mt-6 flex min-h-0 flex-1 flex-col overflow-y-auto rounded-t-[2rem] bg-[#121212] px-5 pb-28 pt-4 text-white shadow-2xl">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#EAB308]">Share</p>
-            <h1 className="text-2xl font-semibold">New post</h1>
-          </div>
-          <button type="button" onClick={() => router.push("/feed")} aria-label="Close" className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10">
+        <div className="grid grid-cols-[2.5rem_1fr_2.5rem] items-center">
+          <span />
+          <h1 className="text-center text-base font-semibold">New post</h1>
+          <button type="button" onClick={() => router.push("/feed")} aria-label="Close" className="flex h-10 w-10 items-center justify-center justify-self-end rounded-full bg-white/10">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -155,10 +218,7 @@ export function CreatePostModal() {
               type="button"
               aria-pressed={tags.includes(pill.tag)}
               onClick={() => choosePill(pill)}
-              className={cn(
-                "h-9 shrink-0 rounded-full px-3 text-xs font-semibold",
-                tags.includes(pill.tag) ? "bg-[#EAB308] text-black" : "bg-black text-zinc-300"
-              )}
+              className={cn("h-9 shrink-0 rounded-full px-3 text-xs font-semibold", tags.includes(pill.tag) ? "bg-[#EAB308] text-black" : "bg-black text-zinc-300")}
             >
               {pill.label}
             </button>
@@ -168,63 +228,69 @@ export function CreatePostModal() {
         <textarea
           value={content}
           onChange={(event) => setContent(event.target.value)}
-          rows={5}
+          rows={4}
           maxLength={2000}
           aria-label="Post"
-          placeholder="Share a testimony, a prayer request, or a blessing."
+          placeholder="Add a text"
           className="mt-4 w-full resize-none rounded-3xl border border-white/10 bg-black px-4 py-4 text-sm leading-6 text-white outline-none ring-[#EAB308] focus:ring-2"
         />
 
-        <label className="mt-4 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-3xl border border-dashed border-white/20 bg-black px-4 py-8 text-sm text-zinc-300">
-          <ImagePlus className="h-6 w-6 text-[#EAB308]" />
-          <span className="max-w-full truncate">{file ? file.name : "Drop a photo or video, or tap to upload"}</span>
-          <input
-            type="file"
-            accept={mediaTypes.join(",")}
-            className="sr-only"
-            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-          />
-        </label>
+        <div className="mt-4">
+          {slides.length > 0 ? <MediaCarousel slides={slides} /> : null}
+          <label className={cn("flex cursor-pointer flex-col items-center justify-center gap-2 bg-black text-sm text-zinc-300", slides.length === 0 ? "aspect-[4/5] rounded-3xl border border-dashed border-white/20" : "mt-3 h-12 rounded-full border border-white/10")}>
+            <ImagePlus className="h-6 w-6 text-[#EAB308]" />
+            <span>{slides.length > 0 ? "Add more photos or videos" : "Tap to open your gallery or camera"}</span>
+            <input
+              type="file"
+              accept="image/*,video/*"
+              multiple
+              className="sr-only"
+              onChange={(event) => {
+                addFiles(event.target.files);
+                event.target.value = "";
+              }}
+            />
+          </label>
+        </div>
 
         <div className="mt-4 rounded-3xl bg-black p-4">
           <p className="flex items-center gap-2 text-sm font-semibold">
             <Music2 className="h-4 w-4 text-[#EAB308]" />
-            Music
+            Add Sound
           </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {tracks.map((track) => (
-              <button
-                key={track.title}
-                type="button"
-                onClick={() => {
-                  setSongTitle(track.title);
-                  setSongArtist(track.artist);
-                  setPresetUrl(track.url);
-                  setAudio(null);
-                }}
-                className={cn(
-                  "rounded-full px-3 py-1.5 text-xs font-semibold",
-                  presetUrl === track.url && !audio ? "bg-[#EAB308] text-black" : "bg-[#121212] text-zinc-300"
-                )}
-              >
-                {track.title}
-              </button>
+          <label className="mt-3 flex h-11 items-center gap-2 rounded-full border border-white/10 bg-[#121212] px-4">
+            <Search className="h-4 w-4 shrink-0 text-zinc-400" />
+            <input
+              value={soundQuery}
+              onChange={(event) => setSoundQuery(event.target.value)}
+              placeholder="Search gospel and worship"
+              aria-label="Search sound"
+              className="h-full w-full bg-transparent text-sm outline-none"
+            />
+          </label>
+          <ul className="mt-2 max-h-40 overflow-y-auto">
+            {matches.map((track) => (
+              <li key={`${track.artist}-${track.title}`}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSongTitle(track.title);
+                    setSongArtist(track.artist);
+                    setPresetUrl(track.url);
+                    setAudio(null);
+                    setSoundQuery("");
+                  }}
+                  className={cn("flex w-full items-center justify-between py-2 text-left text-sm", songTitle === track.title && songArtist === track.artist ? "text-[#EAB308]" : "text-white")}
+                >
+                  <span>
+                    {track.title}
+                    <span className="block text-xs text-zinc-400">{track.artist}</span>
+                  </span>
+                </button>
+              </li>
             ))}
-          </div>
-          <input
-            value={songTitle}
-            onChange={(event) => setSongTitle(event.target.value)}
-            placeholder="Song title"
-            aria-label="Song title"
-            className="mt-3 h-11 w-full rounded-full border border-white/10 bg-[#121212] px-4 text-sm outline-none"
-          />
-          <input
-            value={songArtist}
-            onChange={(event) => setSongArtist(event.target.value)}
-            placeholder="Artist"
-            aria-label="Song artist"
-            className="mt-2 h-11 w-full rounded-full border border-white/10 bg-[#121212] px-4 text-sm outline-none"
-          />
+            {matches.length === 0 ? <li className="py-2 text-sm text-zinc-500">No matching sound.</li> : null}
+          </ul>
           <label className="mt-2 flex h-11 cursor-pointer items-center rounded-full border border-white/10 px-4 text-sm text-zinc-400">
             <span className="truncate">{audio ? audio.name : "Upload an MP3, WAV, or M4A"}</span>
             <input
@@ -238,21 +304,72 @@ export function CreatePostModal() {
               }}
             />
           </label>
+          {videoFile ? (
+            <button
+              type="button"
+              disabled={extracting}
+              onClick={async () => {
+                setExtracting(true);
+                setError("");
+                try {
+                  const extracted = await extractVideoSound(videoFile, trimStart);
+                  setAudio(extracted);
+                  setPresetUrl("");
+                  if (!songTitle) {
+                    setSongTitle("Original audio");
+                    setSongArtist(firstName);
+                  }
+                } catch (extractError) {
+                  setError(extractError instanceof Error ? extractError.message : "The video sound could not be extracted.");
+                } finally {
+                  setExtracting(false);
+                }
+              }}
+              className="mt-2 h-11 w-full rounded-full bg-[#121212] text-sm font-semibold text-[#EAB308] disabled:opacity-60"
+            >
+              {extracting ? "Extracting sound..." : "Extract sound from video"}
+            </button>
+          ) : null}
           {previewUrl ? (
-            <div className="mt-3 flex items-center gap-3 rounded-full bg-[#121212] px-2 py-2">
-              <button
-                type="button"
-                onClick={togglePreview}
-                aria-label={previewing ? "Pause preview" : "Play preview"}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#EAB308] text-black"
-              >
-                {previewing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-              </button>
-              <p className="min-w-0 flex-1 truncate text-sm text-white">
-                {songTitle || "Preview"} {songArtist ? `· ${songArtist}` : ""}
-              </p>
-              <audio ref={previewRef} src={previewUrl} preload="none" onEnded={() => setPreviewing(false)} className="hidden" />
+            <div className="mt-3">
+              <div className="flex items-center gap-3 rounded-full bg-[#121212] px-2 py-2">
+                <button type="button" onClick={togglePreview} aria-label={previewing ? "Pause preview" : "Play preview"} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#EAB308] text-black">
+                  {previewing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                </button>
+                <p className="min-w-0 flex-1 truncate text-sm text-white">
+                  {songTitle || "Preview"} {songArtist ? `· ${songArtist}` : ""}
+                </p>
+                <audio
+                  ref={previewRef}
+                  src={previewUrl}
+                  preload="metadata"
+                  onTimeUpdate={() => {
+                    const player = previewRef.current;
+                    if (player && player.currentTime > trimStart + 15) {
+                      player.pause();
+                      setPreviewing(false);
+                    }
+                  }}
+                  onEnded={() => setPreviewing(false)}
+                  className="hidden"
+                />
+              </div>
+              <label className="mt-3 block text-xs text-zinc-400">
+                15-second snippet starts at {Math.floor(trimStart)}s
+                <input
+                  type="range"
+                  min={0}
+                  max={trimMax || 0}
+                  step={0.1}
+                  value={Math.min(trimStart, trimMax || 0)}
+                  aria-label="Trim sound"
+                  onChange={(event) => setTrimStart(Number(event.target.value))}
+                  className="mt-2 w-full accent-[#EAB308]"
+                />
+              </label>
             </div>
+          ) : songTitle ? (
+            <p className="mt-3 text-xs text-zinc-400">Upload the track, or extract it from a video, to play a 15-second snippet.</p>
           ) : null}
         </div>
 
@@ -261,25 +378,63 @@ export function CreatePostModal() {
             <MapPin className="h-4 w-4 text-[#EAB308]" />
             Location
           </p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {places.map((place) => (
-              <button
-                key={place}
-                type="button"
-                onClick={() => setLocation(place)}
-                className={cn("rounded-full px-3 py-1.5 text-xs font-semibold", location === place ? "bg-[#EAB308] text-black" : "bg-black text-zinc-300")}
-              >
-                {place}
-              </button>
-            ))}
-          </div>
           <input
             value={location}
             onChange={(event) => setLocation(event.target.value)}
-            placeholder="Check in"
+            placeholder="Search a place"
             aria-label="Location"
             className="mt-2 h-11 w-full rounded-full border border-white/10 bg-black px-4 text-sm outline-none"
           />
+          {location.trim() && placeMatches.length > 0 ? (
+            <ul className="mt-2 rounded-2xl bg-black">
+              {placeMatches.map((place) => (
+                <li key={place}>
+                  <button type="button" onClick={() => setLocation(place)} className="w-full px-4 py-2 text-left text-sm">
+                    {place}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <label className="mt-3 block text-sm font-semibold">
+            Activity
+            <select
+              value={activity}
+              aria-label="Activity"
+              onChange={(event) => setActivity(event.target.value as Activity)}
+              className="mt-2 h-11 w-full rounded-full border border-white/10 bg-black px-4 text-sm outline-none"
+            >
+              <option value="">None</option>
+              <option value="birthday">Birthday</option>
+              <option value="testimony">Testimony</option>
+              <option value="church">Church Program</option>
+              <option value="feeling">Feelings / Status</option>
+            </select>
+          </label>
+          {activity === "church" ? (
+            <input
+              value={programName}
+              onChange={(event) => setProgramName(event.target.value)}
+              placeholder="Festival of Blessings"
+              aria-label="Church program"
+              className="mt-2 h-11 w-full rounded-full border border-white/10 bg-black px-4 text-sm outline-none"
+            />
+          ) : null}
+          {activity === "feeling" ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {feelings.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setFeeling(item)}
+                  className={cn("rounded-full px-3 py-1.5 text-xs font-semibold", feeling === item ? "bg-[#EAB308] text-black" : "bg-black text-zinc-300")}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {checkInLine() ? <p className="mt-2 text-xs text-[#EAB308]">{checkInLine()}</p> : null}
         </div>
 
         <div className="mt-4">

@@ -38,6 +38,7 @@ create table if not exists public.posts (
   song_artist text,
   song_url text,
   audio_url text,
+  image_urls text[] not null default '{}',
   created_at timestamptz not null default now(),
   constraint posts_category_check check (
     category in ('testimony', 'prayer_request', 'sermon_note', 'general')
@@ -736,6 +737,7 @@ alter table public.posts add column if not exists is_pinned boolean not null def
 alter table public.posts add column if not exists amen_count integer not null default 0;
 alter table public.posts add column if not exists tagged_user_ids uuid[] not null default '{}';
 alter table public.posts add column if not exists audio_url text;
+alter table public.posts add column if not exists image_urls text[] not null default '{}';
 alter table public.profiles add column if not exists website text;
 alter table public.profiles add column if not exists instagram text;
 

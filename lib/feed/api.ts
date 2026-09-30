@@ -57,6 +57,7 @@ function mapPost(row: PostRow, userId?: string): FeedPost {
     content: row.caption ?? "",
     mediaUrl: row.media_url,
     mediaType: row.media_url ? mediaKind(row.media_type) : null,
+    imageUrls: [],
     tags: row.tags ?? [],
     amenCount: row.likes?.length ?? 0,
     commentCount: row.comments?.length ?? 0,
@@ -117,6 +118,7 @@ type LoosePost = {
   content?: string | null;
   media_url?: string | null;
   media_type?: string | null;
+  image_urls?: string[] | null;
   category?: string | null;
   tags?: string[] | null;
   created_at: string;
@@ -144,6 +146,7 @@ async function attachProfiles(supabase: ReturnType<typeof createClient>, rows: L
 
 async function selectPosts(supabase: ReturnType<typeof createClient>) {
   const columnSets = [
+    "id, user_id, content, media_url, media_type, image_urls, category, tags, created_at, location, song_title, song_artist, song_url, audio_url, is_pinned",
     "id, user_id, content, media_url, media_type, category, tags, created_at, location, song_title, song_artist, song_url, audio_url, is_pinned",
     "id, user_id, content, media_url, media_type, category, tags, created_at, location, song_title, song_artist, song_url, is_pinned",
     "id, user_id, content, media_url, media_type, category, tags, created_at, song_title, song_artist, song_url, audio_url",
@@ -253,9 +256,11 @@ export async function loadCommunity(): Promise<CommunitySnapshot> {
         const row = rows[index];
         const packed = readPackedAudio(row?.content || row?.caption || post.content);
         const audioUrl = row?.audio_url || row?.song_url || (post.mediaType === "audio" ? post.mediaUrl : null) || packed.audioUrl;
+        const imageUrls = Array.isArray(row?.image_urls) ? row.image_urls.filter(Boolean) : [];
         return {
           ...post,
           content: packed.content,
+          imageUrls: imageUrls.length > 0 ? imageUrls : post.mediaUrl && post.mediaType !== "audio" ? [post.mediaUrl] : [],
           location: row?.location ?? null,
           songTitle: row?.song_title || packed.songTitle,
           songArtist: row?.song_artist || packed.songArtist,
@@ -443,11 +448,31 @@ export async function addComment(postId: string, content: string): Promise<FeedC
   }
 }
 
+async function uploadStorage(
+  supabase: ReturnType<typeof createClient>,
+  buckets: string[],
+  path: string,
+  file: Blob,
+  contentType: string
+) {
+  let message = "Storage bucket was not found. Run supabase/phase6.sql and supabase/phase7.sql in the Supabase SQL editor.";
+  for (const bucket of buckets) {
+    const { error } = await supabase.storage.from(bucket).upload(path, file, { contentType, upsert: false });
+    if (!error) return { url: supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl };
+    const missing = /bucket not found|does not exist/i.test(error.message);
+    message = missing
+      ? "Storage bucket was not found. Run supabase/phase6.sql and supabase/phase7.sql in the Supabase SQL editor."
+      : error.message;
+    if (!missing) break;
+  }
+  return { message };
+}
+
 export async function createCommunityPost(input: {
   category: CreateCategory;
   content: string;
   tags: string[];
-  file: File | null;
+  files: File[];
   audio: File | null;
   songTitle: string;
   songArtist: string;
@@ -468,19 +493,18 @@ export async function createCommunityPost(input: {
 
   let mediaUrl: string | null = null;
   let mediaType: string | null = null;
+  const imageUrls: string[] = [];
 
-  if (input.file) {
-    const extension = input.file.name.split(".").pop()?.toLowerCase() || "jpg";
+  for (const file of input.files) {
+    const extension = file.name.split(".").pop()?.toLowerCase() || "jpg";
     const path = `${user.id}/${crypto.randomUUID()}.${extension}`;
-    const { error: uploadError } = await supabase.storage.from("posts").upload(path, input.file, {
-      contentType: input.file.type,
-      upsert: false,
-    });
-
-    if (uploadError) return { ok: false as const, message: uploadError.message };
-
-    mediaUrl = supabase.storage.from("posts").getPublicUrl(path).data.publicUrl;
-    mediaType = input.file.type.startsWith("video") ? "video" : input.file.type.startsWith("audio") ? "audio" : "image";
+    const stored = await uploadStorage(supabase, ["posts", "music_tracks"], path, file, file.type || "image/jpeg");
+    if ("message" in stored) return { ok: false as const, message: stored.message };
+    imageUrls.push(stored.url);
+    if (!mediaUrl) {
+      mediaUrl = stored.url;
+      mediaType = file.type.startsWith("video") ? "video" : "image";
+    }
   }
 
   let audioUrl: string | null = input.audioUrl;
@@ -489,16 +513,9 @@ export async function createCommunityPost(input: {
     const path = `${user.id}/${crypto.randomUUID()}.${extension}`;
     const contentType =
       input.audio.type || (extension === "wav" ? "audio/wav" : extension === "m4a" ? "audio/mp4" : "audio/mpeg");
-    const uploaded = await supabase.storage.from("music_tracks").upload(path, input.audio, {
-      contentType,
-      upsert: false,
-    });
-    const stored = uploaded.error
-      ? await supabase.storage.from("posts").upload(path, input.audio, { contentType, upsert: false })
-      : uploaded;
-    if (stored.error) return { ok: false as const, message: uploaded.error?.message || stored.error.message };
-    const bucket = uploaded.error ? "posts" : "music_tracks";
-    audioUrl = supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+    const stored = await uploadStorage(supabase, ["music_tracks", "posts"], path, input.audio, contentType);
+    if ("message" in stored) return { ok: false as const, message: stored.message };
+    audioUrl = stored.url;
   }
 
   if (audioUrl && !mediaUrl) {
@@ -515,6 +532,7 @@ export async function createCommunityPost(input: {
     tags: input.tags,
     media_url: mediaUrl,
     media_type: mediaType,
+    image_urls: imageUrls,
     location: input.location.trim() || null,
     song_title: input.songTitle.trim() || null,
     song_artist: input.songArtist.trim() || null,
@@ -525,7 +543,7 @@ export async function createCommunityPost(input: {
 
   let { error } = await supabase.from("posts").insert(payload);
 
-  for (let attempt = 0; attempt < 12 && error; attempt += 1) {
+  for (let attempt = 0; attempt < 16 && error; attempt += 1) {
     const message = error.message;
     if (/caption/i.test(message)) delete payload.caption;
     else if (/content/i.test(message)) {
@@ -534,6 +552,7 @@ export async function createCommunityPost(input: {
     } else if (/category/i.test(message)) delete payload.category;
     else if (/tags/i.test(message)) delete payload.tags;
     else if (/media_url/i.test(message)) delete payload.media_url;
+    else if (/image_urls/i.test(message)) delete payload.image_urls;
     else if (/media_type/i.test(message)) delete payload.media_type;
     else if (/location/i.test(message)) delete payload.location;
     else if (/song_title/i.test(message)) delete payload.song_title;

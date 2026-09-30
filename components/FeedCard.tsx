@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Heart, MapPin, MessageCircle, MoreHorizontal, Pause, Play, Share2, HandHeart } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { MediaCarousel, type CarouselSlide } from "@/components/MediaCarousel";
 import type { FeedPost } from "@/lib/feed/types";
 import { categoryLabel, formatTimestamp } from "@/lib/feed/types";
 import { cn } from "@/lib/utils";
@@ -205,16 +206,11 @@ export function FeedCard({
         </div>
       </header>
 
-      {post.mediaUrl && (post.mediaType === "video" || post.mediaType === "image") ? (
-        <div className="relative">
-          {post.mediaType === "video" ? (
-            <video src={post.mediaUrl} controls playsInline className="max-h-[32rem] w-full bg-black" />
-          ) : (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={post.mediaUrl} alt="" className="max-h-[32rem] w-full object-cover" />
-          )}
-          {showMusic ? (
-            <div className="absolute bottom-3 left-3 right-3">
+      {mediaSlides(post).length > 0 ? (
+        <MediaCarousel
+          slides={mediaSlides(post)}
+          overlay={
+            showMusic ? (
               <MusicPill
                 title={post.songTitle || "Gospel track"}
                 artist={post.songArtist || "FOBC"}
@@ -222,9 +218,9 @@ export function FeedCard({
                 canPlay={Boolean(audioSrc)}
                 onToggle={toggleAudio}
               />
-            </div>
-          ) : null}
-        </div>
+            ) : null
+          }
+        />
       ) : null}
 
       <div className="px-4">
@@ -274,7 +270,7 @@ export function FeedCard({
         {reported ? <p className="mt-2 text-xs text-[#EAB308]">Thanks. This post was reported.</p> : null}
         {actionError ? <p className="mt-2 text-xs text-red-300">{actionError}</p> : null}
 
-        {showMusic && !(post.mediaUrl && (post.mediaType === "video" || post.mediaType === "image")) ? (
+        {showMusic && mediaSlides(post).length === 0 ? (
           <div className="mt-3">
             <MusicPill
               title={post.songTitle || "Gospel track"}
@@ -366,6 +362,14 @@ export function FeedCard({
       ) : null}
     </article>
   );
+}
+
+function mediaSlides(post: FeedPost): CarouselSlide[] {
+  const urls = post.imageUrls.length > 0 ? post.imageUrls : post.mediaUrl && post.mediaType !== "audio" ? [post.mediaUrl] : [];
+  return urls.map((url) => ({
+    url,
+    type: /\.(mp4|webm|mov)(\?|$)/i.test(url) ? "video" : "image",
+  }));
 }
 
 function MusicPill({
