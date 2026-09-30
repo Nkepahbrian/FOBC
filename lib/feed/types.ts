@@ -18,6 +18,7 @@ export type FeedPost = {
   content: string;
   mediaUrl: string | null;
   mediaType: "image" | "video" | "audio" | null;
+  imageUrl: string | null;
   imageUrls: string[];
   tags: string[];
   amenCount: number;

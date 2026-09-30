@@ -39,6 +39,7 @@ create table if not exists public.posts (
   song_url text,
   audio_url text,
   song_snippet_start double precision,
+  image_url text,
   image_urls text[] not null default '{}',
   created_at timestamptz not null default now(),
   constraint posts_category_check check (
@@ -426,7 +427,10 @@ create policy "avatars_owner_insert"
   to authenticated
   with check (
     bucket_id = 'avatars'
-    and (storage.foldername(name))[1] = auth.uid()::text
+    and (
+      (storage.foldername(name))[1] = auth.uid()::text
+      or name like auth.uid()::text || '-%'
+    )
   );
 
 create policy "avatars_owner_update"
@@ -740,6 +744,7 @@ alter table public.posts add column if not exists tagged_user_ids uuid[] not nul
 alter table public.posts add column if not exists audio_url text;
 alter table public.posts add column if not exists image_urls text[] not null default '{}';
 alter table public.posts add column if not exists song_snippet_start double precision;
+alter table public.posts add column if not exists image_url text;
 alter table public.profiles add column if not exists website text;
 alter table public.profiles add column if not exists instagram text;
 

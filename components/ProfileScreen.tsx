@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { Camera } from "lucide-react";
 import { Wordmark } from "@/components/Logo";
 import { readPackedAudio } from "@/lib/feed/api";
 import { createClient } from "@/lib/supabase/client";
@@ -40,47 +41,32 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
   const [profile, setProfile] = useState<ProfileModel | null>(null);
   const [notice, setNotice] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [editingBio, setEditingBio] = useState(false);
+  const [bioDraft, setBioDraft] = useState("");
 
   const load = useCallback(async (cancelled: () => boolean) => {
     const supabase = createClient();
-      const { data } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
-      const row = (data ?? {}) as Record<string, string | null>;
-      const name = row.full_name || (isOwn ? "Your profile" : "Community member");
+    const [profileResult, postsResult, followResult] = await Promise.all([
+      supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
+      supabase.from("posts").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+      supabase.from("follows").select("id", { count: "exact", head: true }).eq("following_id", userId),
+    ]);
+    const row = (profileResult.data ?? {}) as Record<string, string | null>;
+    const name = row.full_name || (isOwn ? "Your profile" : "Community member");
+    const posts = (postsResult.error ? [] : postsResult.data ?? []) as unknown as Record<string, unknown>[];
+    const ids = posts.map((post) => String(post.id));
+    let amens = 0;
+    if (ids.length > 0) {
+      const [amenResult, likeResult] = await Promise.all([
+        supabase.from("post_amens").select("id").in("post_id", ids),
+        supabase.from("likes").select("id").in("post_id", ids),
+      ]);
+      amens = !amenResult.error ? amenResult.data?.length ?? 0 : !likeResult.error ? likeResult.data?.length ?? 0 : 0;
+    }
+    const followers = followResult.error ? 0 : followResult.count ?? 0;
 
-      const postAttempts = [
-        "id, content, media_url, media_type, image_urls, tags, song_title, created_at",
-        "id, content, media_url, media_type, tags, song_title, created_at",
-        "id, content, created_at",
-        "id, caption, created_at",
-      ];
-      let posts: Record<string, unknown>[] = [];
-      for (const columns of postAttempts) {
-        const result = await supabase.from("posts").select(columns).eq("user_id", userId).order("created_at", { ascending: false });
-        if (!result.error) {
-          posts = (result.data ?? []) as unknown as Record<string, unknown>[];
-          break;
-        }
-      }
-
-      const ids = posts.map((post) => String(post.id));
-      let amens = 0;
-      if (ids.length > 0) {
-        const amenTables = ["post_amens", "likes"];
-        for (const table of amenTables) {
-          const result = await supabase.from(table).select("id").in("post_id", ids);
-          if (!result.error) {
-            amens = result.data?.length ?? 0;
-            break;
-          }
-        }
-      }
-
-      let followers = 0;
-      const followResult = await supabase.from("follows").select("id", { count: "exact", head: true }).eq("following_id", userId);
-      if (!followResult.error) followers = followResult.count ?? 0;
-
-      if (cancelled()) return;
-      setProfile({
+    if (cancelled()) return;
+    setProfile({
         id: userId,
         fullName: name,
         bio: row.bio || (isOwn ? "Add a short bio so the community knows your story." : "FOBC member"),
@@ -93,8 +79,10 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
         grid: posts.map((post) => {
           const packed = readPackedAudio(String(post.content || post.caption || ""));
           const images = Array.isArray(post.image_urls) ? (post.image_urls as string[]).filter(Boolean) : [];
-          const mediaUrl = images[0] || ((post.media_url as string | null) ?? null);
-          const mediaType = images[0] ? ((post.media_type as string | null) ?? "image") : ((post.media_type as string | null) ?? null);
+          const imageUrl = (post.image_url as string | null) || (post.media_url as string | null) || null;
+          const displayImages = images.length ? images : imageUrl ? [imageUrl] : [];
+          const mediaUrl = displayImages[0] ?? null;
+          const mediaType = (post.media_type as string | null) ?? (mediaUrl ? "image" : null);
           return {
             id: String(post.id),
             content: packed.content,
@@ -127,6 +115,55 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
     return (tags.length > 0 ? tags : ["Faith", "Worship", "Prayer", "Family"]).slice(0, 8);
   }, [profile]);
 
+  async function uploadAvatar(file: File | undefined) {
+    if (!file || !profile) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setNotice("Choose a photo smaller than 5 MB.");
+      return;
+    }
+    const previewUrl = URL.createObjectURL(file);
+    setProfile({ ...profile, avatarUrl: previewUrl });
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setNotice("Sign in before updating your photo.");
+      return;
+    }
+    const fileName = `${user.id}-${Date.now()}.jpg`;
+    const contentType = file.type || "image/jpeg";
+    let stored = await supabase.storage.from("avatars").upload(fileName, file, { contentType, upsert: false });
+    let path = fileName;
+    if (stored.error) {
+      path = `${user.id}/${fileName}`;
+      stored = await supabase.storage.from("avatars").upload(path, file, { contentType, upsert: false });
+    }
+    if (stored.error) {
+      setNotice(stored.error.message);
+      return;
+    }
+    const avatarUrl = supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl;
+    const { error } = await supabase.from("profiles").update({ avatar_url: avatarUrl }).eq("id", user.id);
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+    setProfile((current) => (current ? { ...current, avatarUrl } : current));
+    window.dispatchEvent(new CustomEvent("fobc-avatar", { detail: { userId: user.id, avatarUrl } }));
+    setNotice("Profile photo updated.");
+  }
+
+  async function saveBio() {
+    if (!profile) return;
+    const next = bioDraft.trim();
+    setProfile({ ...profile, bio: next || profile.bio });
+    setEditingBio(false);
+    const supabase = createClient();
+    const { error } = await supabase.from("profiles").update({ bio: next }).eq("id", profile.id);
+    if (error) setNotice(error.message);
+  }
+
   async function shareProfile() {
     if (!profile) return;
     const url = `${window.location.origin}/profile/${profile.id}`;
@@ -143,23 +180,61 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
   }
 
   if (!profile) {
-    return <p className="px-4 pt-8 text-sm text-zinc-400">{notice || "Loading profile..."}</p>;
+    return (
+      <section className="px-4 pt-4">
+        <div className="animate-pulse">
+          <div className="h-8 w-28 rounded bg-white/10" />
+          <div className="mt-4 flex items-center gap-6">
+            <div className="h-20 w-20 rounded-full bg-[#121212]" />
+            <div className="grid flex-1 grid-cols-3 gap-2">
+              <div className="h-8 rounded bg-white/10" />
+              <div className="h-8 rounded bg-white/10" />
+              <div className="h-8 rounded bg-white/10" />
+            </div>
+          </div>
+          <div className="mt-6 grid grid-cols-3 gap-0.5">
+            {[0, 1, 2, 3, 4, 5].map((item) => (
+              <div key={item} className="aspect-square bg-[#121212]" />
+            ))}
+          </div>
+        </div>
+        {notice ? <p className="mt-3 text-sm text-red-300">{notice}</p> : null}
+      </section>
+    );
   }
 
   return (
     <section className="px-4 pt-4 text-white">
       <Wordmark className="text-3xl" />
       <div className="flex items-center gap-6">
-        <div className="rounded-full bg-gradient-to-tr from-[#EAB308] via-[#FDE68A] to-[#EAB308] p-[3px]">
+        <label className="relative cursor-pointer rounded-full bg-gradient-to-tr from-[#EAB308] via-[#FDE68A] to-[#EAB308] p-[3px]">
           {profile.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={profile.avatarUrl} alt="" className="h-20 w-20 rounded-full border-2 border-black object-cover" />
+            <img src={profile.avatarUrl} alt="" className="h-20 w-20 rounded-full border-2 border-black object-cover" style={{ objectFit: "cover" }} />
           ) : (
             <span className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-black bg-[#121212] text-xl font-semibold text-[#EAB308]">
               {initials(profile.fullName) || "F"}
             </span>
           )}
-        </div>
+          {isOwn ? (
+            <>
+              <span className="absolute bottom-0 right-0 flex h-6 w-6 items-center justify-center rounded-full bg-[#EAB308] text-black">
+                <Camera className="h-3.5 w-3.5" />
+              </span>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                aria-label="Upload profile photo"
+                className="absolute inset-0 cursor-pointer opacity-0"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  uploadAvatar(file);
+                }}
+              />
+            </>
+          ) : null}
+        </label>
         <dl className="grid flex-1 grid-cols-3 text-center">
           <div>
             <dt className="text-lg font-semibold">{profile.posts}</dt>
@@ -177,7 +252,39 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
       </div>
 
       <h1 className="mt-4 text-sm font-semibold">{profile.fullName}</h1>
-      <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-zinc-300">{profile.bio}</p>
+      {editingBio ? (
+        <form
+          className="mt-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            saveBio();
+          }}
+        >
+          <textarea
+            value={bioDraft}
+            onChange={(event) => setBioDraft(event.target.value)}
+            rows={3}
+            maxLength={160}
+            aria-label="Bio"
+            className="w-full rounded-2xl border border-white/10 bg-black px-3 py-2 text-sm text-white outline-none focus:border-[#EAB308]"
+          />
+          <button type="submit" className="mt-2 h-9 rounded-full bg-[#EAB308] px-4 text-sm font-semibold text-black">
+            Save bio
+          </button>
+        </form>
+      ) : (
+        <button
+          type="button"
+          disabled={!isOwn}
+          onClick={() => {
+            setBioDraft(profile.bio);
+            setEditingBio(true);
+          }}
+          className="mt-1 block whitespace-pre-wrap text-left text-sm leading-5 text-zinc-300"
+        >
+          {profile.bio}
+        </button>
+      )}
       <div className="mt-2 flex flex-col gap-1 text-sm font-semibold text-[#EAB308]">
         {profile.website ? (
           <a href={profile.website} target="_blank" rel="noopener noreferrer">
@@ -222,10 +329,10 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
             {profile.grid.map((post) => (
               <Link key={post.id} href={`/feed?post=${post.id}`} className="aspect-square overflow-hidden bg-[#121212]">
                 {post.mediaUrl && post.mediaType?.startsWith("video") ? (
-                  <video src={post.mediaUrl} muted playsInline preload="metadata" className="h-full w-full object-cover" style={{ objectFit: "cover" }} />
+                  <video src={post.mediaUrl} muted playsInline preload="metadata" className="h-full w-full rounded-sm object-cover" style={{ objectFit: "cover" }} />
                 ) : post.mediaUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={post.mediaUrl} alt="" className="h-full w-full object-cover" style={{ objectFit: "cover" }} />
+                  <img src={post.mediaUrl} alt="" className="h-full w-full rounded-sm object-cover" style={{ objectFit: "cover" }} />
                 ) : (
                   <span className="flex h-full items-end p-2 text-left text-[11px] leading-4 text-zinc-300">
                     {post.songTitle || post.content.slice(0, 80) || "Blessing"}

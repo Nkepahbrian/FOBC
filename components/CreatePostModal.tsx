@@ -9,7 +9,7 @@ import { feelings, filterPlaces, filterTracks } from "@/lib/create/catalog";
 type PlaceHit = { label: string; value: string };
 type ClipLength = 15 | 25;
 import { createCommunityPost } from "@/lib/feed/api";
-import type { CreateCategory } from "@/lib/feed/types";
+import type { CreateCategory, FeedPost } from "@/lib/feed/types";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { MediaCarousel, type CarouselSlide } from "@/components/MediaCarousel";
@@ -45,7 +45,9 @@ export function CreatePostModal() {
   const [remotePlaces, setRemotePlaces] = useState<PlaceHit[]>([]);
   const [suggesting, setSuggesting] = useState(false);
   const [toast, setToast] = useState(false);
+  const [listPreviewId, setListPreviewId] = useState("");
   const previewRef = useRef<HTMLAudioElement | null>(null);
+  const listPreviewRef = useRef<HTMLAudioElement | null>(null);
   const autoplayRef = useRef(false);
   const [songTitle, setSongTitle] = useState("");
   const [songArtist, setSongArtist] = useState("");
@@ -54,6 +56,7 @@ export function CreatePostModal() {
   const [programName, setProgramName] = useState("");
   const [feeling, setFeeling] = useState<(typeof feelings)[number]>("Grateful");
   const [firstName, setFirstName] = useState("Someone");
+  const [accountId, setAccountId] = useState("");
   const [friendQuery, setFriendQuery] = useState("");
   const [friends, setFriends] = useState<Friend[]>([]);
   const [tagged, setTagged] = useState<Friend[]>([]);
@@ -75,6 +78,7 @@ export function CreatePostModal() {
     const supabase = createClient();
     supabase.auth.getUser().then(async ({ data }) => {
       if (!data.user) return;
+      setAccountId(data.user.id);
       const profile = await supabase.from("profiles").select("full_name").eq("id", data.user.id).maybeSingle();
       const name = profile.data?.full_name?.trim().split(" ")[0];
       if (name) setFirstName(name);
@@ -299,6 +303,34 @@ export function CreatePostModal() {
       setError(result.message || "The post could not be shared.");
       return;
     }
+    const optimistic: FeedPost = {
+      id: result.id || `local-${Date.now()}`,
+      userId: accountId,
+      fullName: firstName,
+      avatarUrl: null,
+      createdAt: new Date().toISOString(),
+      category,
+      content: content.trim(),
+      mediaUrl: result.imageUrl,
+      mediaType: result.imageUrl ? (files.some((file) => file.type.startsWith("video")) ? "video" : "image") : result.audioUrl ? "audio" : null,
+      imageUrl: result.imageUrl,
+      imageUrls: result.imageUrls,
+      tags,
+      amenCount: 0,
+      commentCount: 0,
+      prayerCount: 0,
+      likedByMe: false,
+      prayedByMe: false,
+      source: "live",
+      pinned: false,
+      featured: false,
+      location: checkInLine() || null,
+      songTitle: songTitle || null,
+      songArtist: songArtist || null,
+      songUrl: result.audioUrl,
+      audioUrl: result.audioUrl,
+    };
+    window.sessionStorage.setItem("fobc-optimistic-post", JSON.stringify(optimistic));
     window.sessionStorage.setItem("fobc-just-shared", result.id || "latest");
     window.dispatchEvent(new Event("fobc-post-shared"));
     setToast(true);
@@ -375,30 +407,59 @@ export function CreatePostModal() {
               className="h-full w-full bg-transparent text-sm outline-none"
             />
           </label>
-          <ul className="mt-2 max-h-40 overflow-y-auto">
-            {matches.map((track) => (
-              <li key={`${track.artist}-${track.title}`}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSongTitle(track.title);
-                    setSongArtist(track.artist);
-                    setPresetUrl(track.url);
-                    setAudio(null);
-                    setSoundQuery("");
-                    autoplayRef.current = Boolean(track.url);
-                  }}
-                  className={cn("flex w-full items-center justify-between py-2 text-left text-sm", songTitle === track.title && songArtist === track.artist ? "text-[#EAB308]" : "text-white")}
-                >
-                  <span>
-                    {track.title}
-                    <span className="block text-xs text-zinc-400">{track.artist}</span>
-                  </span>
-                </button>
-              </li>
-            ))}
+          <ul className="mt-2 max-h-52 overflow-y-auto">
+            {matches.map((track) => {
+              const trackId = `${track.artist}-${track.title}`;
+              const selected = songTitle === track.title && songArtist === track.artist;
+              return (
+                <li key={trackId} className="flex items-center gap-2 border-b border-white/5 py-1">
+                  <button
+                    type="button"
+                    aria-label={listPreviewId === trackId ? `Pause ${track.title}` : `Preview ${track.title}`}
+                    disabled={!track.url}
+                    onClick={() => {
+                      const player = listPreviewRef.current;
+                      if (!player || !track.url) return;
+                      if (listPreviewId === trackId) {
+                        player.pause();
+                        setListPreviewId("");
+                        return;
+                      }
+                      player.src = track.url;
+                      player.muted = false;
+                      player.play().then(() => setListPreviewId(trackId)).catch(() => setListPreviewId(""));
+                    }}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#EAB308] text-black disabled:opacity-30"
+                  >
+                    {listPreviewId === trackId ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSongTitle(track.title);
+                      setSongArtist(track.artist);
+                      setPresetUrl(track.url);
+                      setAudio(null);
+                      setSoundQuery("");
+                      autoplayRef.current = Boolean(track.url);
+                    }}
+                    className={cn("min-w-0 flex-1 py-1 text-left text-sm", selected ? "text-[#EAB308]" : "text-white")}
+                  >
+                    <span className="block truncate">{track.title}</span>
+                    <span className="block truncate text-xs text-zinc-400">{track.artist}{track.url ? "" : " · upload a recording to play"}</span>
+                  </button>
+                </li>
+              );
+            })}
             {matches.length === 0 ? <li className="py-2 text-sm text-zinc-500">No matching sound.</li> : null}
           </ul>
+          <audio
+            ref={listPreviewRef}
+            preload="none"
+            muted={false}
+            onEnded={() => setListPreviewId("")}
+            className="hidden"
+          />
           <label className="mt-2 flex h-11 cursor-pointer items-center rounded-full border border-white/10 px-4 text-sm text-zinc-400">
             <span className="truncate">{audio ? audio.name : "Upload an MP3, WAV, or M4A"}</span>
             <input

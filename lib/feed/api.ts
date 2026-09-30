@@ -57,6 +57,7 @@ function mapPost(row: PostRow, userId?: string): FeedPost {
     content: row.caption ?? "",
     mediaUrl: row.media_url,
     mediaType: row.media_url ? mediaKind(row.media_type) : null,
+    imageUrl: null,
     imageUrls: [],
     tags: row.tags ?? [],
     amenCount: row.likes?.length ?? 0,
@@ -118,6 +119,7 @@ type LoosePost = {
   content?: string | null;
   media_url?: string | null;
   media_type?: string | null;
+  image_url?: string | null;
   image_urls?: string[] | null;
   category?: string | null;
   tags?: string[] | null;
@@ -144,35 +146,18 @@ async function attachProfiles(supabase: ReturnType<typeof createClient>, rows: L
   }));
 }
 
+let joinProfiles = true;
+
 async function selectPosts(supabase: ReturnType<typeof createClient>) {
-  const columnSets = [
-    "id, user_id, content, media_url, media_type, image_urls, category, tags, created_at, location, song_title, song_artist, song_url, audio_url, is_pinned",
-    "id, user_id, content, media_url, media_type, category, tags, created_at, location, song_title, song_artist, song_url, audio_url, is_pinned",
-    "id, user_id, content, media_url, media_type, category, tags, created_at, location, song_title, song_artist, song_url, is_pinned",
-    "id, user_id, content, media_url, media_type, category, tags, created_at, song_title, song_artist, song_url, audio_url",
-    "id, user_id, content, media_url, media_type, category, tags, created_at, song_title, song_artist, song_url",
-    "id, user_id, content, media_url, media_type, category, tags, created_at",
-    "id, user_id, content, category, tags, created_at",
-    "id, user_id, content, created_at",
-    "id, user_id, caption, media_url, media_type, category, tags, created_at",
-    "id, user_id, caption, created_at",
-  ];
-  let lastMessage = "The live feed could not be loaded.";
-
-  for (const columns of columnSets) {
-    const joined = await supabase
-      .from("posts")
-      .select(`${columns}, profiles(full_name, avatar_url)`)
-      .order("created_at", { ascending: false });
-
+  if (joinProfiles) {
+    const joined = await supabase.from("posts").select("*, profiles(full_name, avatar_url)").order("created_at", { ascending: false });
     if (!joined.error) return (joined.data ?? []) as unknown as LoosePost[];
-
-    const plain = await supabase.from("posts").select(columns).order("created_at", { ascending: false });
-    if (!plain.error) return attachProfiles(supabase, (plain.data ?? []) as unknown as LoosePost[]);
-    lastMessage = plain.error.message;
+    joinProfiles = false;
   }
 
-  throw new Error(lastMessage);
+  const plain = await supabase.from("posts").select("*").order("created_at", { ascending: false });
+  if (!plain.error) return attachProfiles(supabase, (plain.data ?? []) as unknown as LoosePost[]);
+  throw new Error(plain.error.message);
 }
 
 type EngagementRow = { id?: string; post_id: string; user_id?: string };
@@ -256,11 +241,14 @@ export async function loadCommunity(): Promise<CommunitySnapshot> {
         const row = rows[index];
         const packed = readPackedAudio(row?.content || row?.caption || post.content);
         const audioUrl = row?.audio_url || row?.song_url || (post.mediaType === "audio" ? post.mediaUrl : null) || packed.audioUrl;
-        const imageUrls = Array.isArray(row?.image_urls) ? row.image_urls.filter(Boolean) : [];
+        const imageUrl = row?.image_url || (row?.media_url && row?.media_type !== "audio" ? row.media_url : null);
+        const listed = Array.isArray(row?.image_urls) ? row.image_urls.filter(Boolean) : [];
+        const imageUrls = listed.length > 0 ? listed : imageUrl ? [imageUrl] : [];
         return {
           ...post,
           content: packed.content,
-          imageUrls: imageUrls.length > 0 ? imageUrls : post.mediaUrl && post.mediaType !== "audio" ? [post.mediaUrl] : [],
+          imageUrl,
+          imageUrls,
           location: row?.location ?? null,
           songTitle: row?.song_title || packed.songTitle,
           songArtist: row?.song_artist || packed.songArtist,
@@ -534,6 +522,7 @@ export async function createCommunityPost(input: {
     tags: input.tags,
     media_url: mediaUrl,
     media_type: mediaType,
+    image_url: imageUrls[0] ?? null,
     image_urls: imageUrls,
     location: input.location.trim() || null,
     song_title: input.songTitle.trim() || null,
@@ -556,6 +545,7 @@ export async function createCommunityPost(input: {
     else if (/tags/i.test(message)) delete payload.tags;
     else if (/media_url/i.test(message)) delete payload.media_url;
     else if (/image_urls/i.test(message)) delete payload.image_urls;
+    else if (/image_url/i.test(message)) delete payload.image_url;
     else if (/media_type/i.test(message)) delete payload.media_type;
     else if (/location/i.test(message)) delete payload.location;
     else if (/song_snippet_start/i.test(message)) delete payload.song_snippet_start;
@@ -572,7 +562,13 @@ export async function createCommunityPost(input: {
   if (error) return { ok: false as const, message: error.message };
 
   const latest = await supabase.from("posts").select("id").eq("user_id", user.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
-  return { ok: true as const, id: latest.data?.id ?? null };
+  return {
+    ok: true as const,
+    id: latest.data?.id ?? null,
+    imageUrl: imageUrls[0] ?? null,
+    imageUrls,
+    audioUrl,
+  };
 }
 
 export async function updatePostContent(post: FeedPost, content: string) {

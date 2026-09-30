@@ -281,7 +281,7 @@ export function FeedCard({
             />
           </div>
         ) : null}
-        {audioSrc ? <audio ref={audioRef} src={audioSrc} preload="none" onEnded={() => setPlaying(false)} className="hidden" /> : null}
+        {audioSrc ? <audio ref={audioRef} src={audioSrc} preload="metadata" muted={false} onEnded={() => setPlaying(false)} className="hidden" /> : null}
 
         {post.tags.length > 0 ? (
           <ul className="mt-3 flex flex-wrap gap-2">
@@ -364,11 +364,14 @@ export function FeedCard({
   );
 }
 
+function displayImages(post: FeedPost) {
+  return post.imageUrls?.length ? post.imageUrls : post.imageUrl ? [post.imageUrl] : [];
+}
+
 function mediaSlides(post: FeedPost): CarouselSlide[] {
-  const urls = post.imageUrls.length > 0 ? post.imageUrls : post.mediaUrl && post.mediaType !== "audio" ? [post.mediaUrl] : [];
-  return urls.map((url) => ({
+  return displayImages(post).map((url) => ({
     url,
-    type: /\.(mp4|webm|mov)(\?|$)/i.test(url) ? "video" : "image",
+    type: /\.(mp4|webm|mov)(\?|$)/i.test(url) || (post.mediaType === "video" && displayImages(post).length === 1) ? "video" : "image",
   }));
 }
 

@@ -20,12 +20,41 @@ import {
   updatePostContent,
   type CommunitySnapshot,
 } from "@/lib/feed/api";
-import type { FeedComment } from "@/lib/feed/types";
+import type { FeedComment, FeedPost } from "@/lib/feed/types";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
+function readOptimisticPost(): FeedPost | null {
+  try {
+    const raw = window.sessionStorage.getItem("fobc-optimistic-post");
+    return raw ? (JSON.parse(raw) as FeedPost) : null;
+  } catch {
+    return null;
+  }
+}
+
+function FeedSkeleton() {
+  return (
+    <div className="px-4 py-3">
+      {[0, 1, 2].map((item) => (
+        <div key={item} className="mb-6 animate-pulse">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-full bg-white/10" />
+            <div className="space-y-2">
+              <div className="h-3 w-28 rounded bg-white/10" />
+              <div className="h-2 w-16 rounded bg-white/10" />
+            </div>
+          </div>
+          <div className="mt-3 aspect-[4/5] rounded-2xl bg-[#121212]" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "prayer" }) {
   const [snapshot, setSnapshot] = useState<CommunitySnapshot | null>(null);
+  const [booting, setBooting] = useState(true);
   const [commentsByPost, setCommentsByPost] = useState<Record<string, FeedComment[]>>({});
   const [openComments, setOpenComments] = useState<string | null>(null);
   const [viewerId, setViewerId] = useState<string | null>(null);
@@ -53,14 +82,41 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
       }
       window.sessionStorage.removeItem("fobc-just-shared");
     }
+    const optimistic = readOptimisticPost();
+    if (optimistic) {
+      const saved = next.posts.some((post) => post.id === optimistic.id || (post.userId === optimistic.userId && post.content === optimistic.content && !post.id.startsWith("local-")));
+      if (saved) window.sessionStorage.removeItem("fobc-optimistic-post");
+      else next = { ...next, posts: [optimistic, ...next.posts.filter((post) => post.id !== optimistic.id)] };
+    }
     setSnapshot(next);
   }, []);
 
   useEffect(() => {
-    refresh();
+    const optimistic = readOptimisticPost();
+    if (optimistic) {
+      setSnapshot({ posts: [optimistic], events: [], isLiveActive: false, mode: "live", notice: null });
+    }
+    refresh().finally(() => setBooting(false));
     const supabase = createClient();
     supabase.auth.getUser().then(({ data }) => setViewerId(data.user?.id ?? null));
   }, [refresh]);
+
+  useEffect(() => {
+    function onAvatar(event: Event) {
+      const detail = (event as CustomEvent<{ userId: string; avatarUrl: string }>).detail;
+      if (!detail?.userId) return;
+      setSnapshot((current) =>
+        current
+          ? {
+              ...current,
+              posts: current.posts.map((post) => (post.userId === detail.userId ? { ...post, avatarUrl: detail.avatarUrl } : post)),
+            }
+          : current
+      );
+    }
+    window.addEventListener("fobc-avatar", onAvatar);
+    return () => window.removeEventListener("fobc-avatar", onAvatar);
+  }, []);
 
   useEffect(() => {
     if (snapshot?.mode !== "live" || !getSupabaseEnv().isConfigured) return;
@@ -211,7 +267,7 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
           <p className="mx-4 rounded-2xl bg-[#EAB308]/15 px-4 py-3 text-sm text-[#EAB308]">{snapshot.notice}</p>
         ) : null}
 
-        {!snapshot ? <p className="px-4 text-sm text-zinc-500">Loading blessings...</p> : null}
+        {booting && !snapshot ? <FeedSkeleton /> : null}
 
         {snapshot && initialTab === "prayer" ? (
           <PrayerWall
