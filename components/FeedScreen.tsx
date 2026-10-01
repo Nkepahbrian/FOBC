@@ -59,6 +59,8 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
   const [commentsByPost, setCommentsByPost] = useState<Record<string, FeedComment[]>>({});
   const [openComments, setOpenComments] = useState<string | null>(null);
   const [viewerId, setViewerId] = useState<string | null>(null);
+  const [viewerName, setViewerName] = useState("You");
+  const [viewerAvatar, setViewerAvatar] = useState<string | null>(null);
   const [hiddenIds, setHiddenIds] = useState<string[]>([]);
 
   const refresh = useCallback(async () => {
@@ -103,7 +105,14 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
     }
     refresh().finally(() => setBooting(false));
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => setViewerId(data.user?.id ?? null));
+    supabase.auth.getUser().then(async ({ data }) => {
+      const id = data.user?.id ?? null;
+      setViewerId(id);
+      if (!id) return;
+      const profile = await supabase.from("profiles").select("full_name, avatar_url").eq("id", id).maybeSingle();
+      setViewerName(profile.data?.full_name || "You");
+      setViewerAvatar(profile.data?.avatar_url ?? null);
+    });
   }, [refresh]);
 
   useEffect(() => {
@@ -192,7 +201,9 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
     const pending = {
       id: `local-${Date.now()}`,
       postId,
-      fullName: "You",
+      userId: viewerId,
+      fullName: viewerName,
+      avatarUrl: viewerAvatar,
       content: content.trim(),
       createdAt: new Date().toISOString(),
     };

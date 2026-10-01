@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Heart, MapPin, MessageCircle, MoreHorizontal, Music, Share2, HandHeart, Volume2, VolumeX } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AdelphoiButton } from "@/components/AdelphoiButton";
 import { MediaCarousel, type CarouselSlide } from "@/components/MediaCarousel";
 import { MediaLightbox } from "@/components/MediaLightbox";
 import { ThoughtCard } from "@/components/ThoughtCard";
@@ -187,9 +188,12 @@ export function FeedCard({
         </Link>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
-            <Link href={profileHref} className="m-0 block min-w-0 flex-1 p-0">
-              <h3 className="m-0 truncate p-0 text-sm font-semibold leading-[1.2] text-white">{post.fullName}</h3>
-            </Link>
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <Link href={profileHref} className="m-0 block min-w-0 p-0">
+                <h3 className="m-0 truncate p-0 text-sm font-semibold leading-[1.2] text-white">{post.fullName}</h3>
+              </Link>
+              <AdelphoiButton userId={post.userId} name={post.fullName} />
+            </div>
             <div className="flex shrink-0 items-center gap-1">
               <time className="text-xs text-zinc-500" dateTime={post.createdAt}>
                 {formatTimestamp(post.createdAt)}

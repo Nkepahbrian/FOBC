@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import { X } from "lucide-react";
 import type { FeedComment, FeedPost } from "@/lib/feed/types";
 
@@ -10,6 +11,32 @@ type CommentDrawerProps = {
   onClose: () => void;
   onComment: (postId: string, content: string) => void;
 };
+
+function initials(name: string) {
+  return name
+    .split(" ")
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
+function CommentAvatar({ comment }: { comment: FeedComment }) {
+  const face = comment.avatarUrl ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={comment.avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
+  ) : (
+    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black text-[11px] font-semibold text-[#EAB308]">
+      {initials(comment.fullName) || "A"}
+    </span>
+  );
+
+  if (!comment.userId) return face;
+  return (
+    <Link href={`/profile/${comment.userId}`} aria-label={comment.fullName} className="shrink-0">
+      {face}
+    </Link>
+  );
+}
 
 export function CommentDrawer({ post, comments, onClose, onComment }: CommentDrawerProps) {
   const [draft, setDraft] = useState("");
@@ -49,12 +76,22 @@ export function CommentDrawer({ post, comments, onClose, onComment }: CommentDra
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto">
+        <div className="mt-4 max-h-[360px] space-y-4 overflow-y-auto overscroll-contain pr-1">
           {comments.length === 0 ? <p className="text-sm text-zinc-400">No comments yet.</p> : null}
           {comments.map((comment) => (
-            <p key={comment.id} className="text-sm leading-5 text-zinc-200">
-              <span className="font-semibold text-white">{comment.fullName}</span> {comment.content}
-            </p>
+            <div key={comment.id} className="flex items-start gap-3">
+              <CommentAvatar comment={comment} />
+              <div className="min-w-0 flex-1">
+                {comment.userId ? (
+                  <Link href={`/profile/${comment.userId}`} className="text-sm font-bold text-white">
+                    {comment.fullName}
+                  </Link>
+                ) : (
+                  <p className="text-sm font-bold text-white">{comment.fullName}</p>
+                )}
+                <p className="mt-0.5 whitespace-pre-wrap text-sm leading-5 text-zinc-200">{comment.content}</p>
+              </div>
+            </div>
           ))}
         </div>
         <form onSubmit={submit} className="mt-4 flex gap-2">

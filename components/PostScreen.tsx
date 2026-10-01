@@ -24,14 +24,23 @@ export function PostScreen({ postId }: { postId: string }) {
   const [post, setPost] = useState<FeedPost | null>(null);
   const [missing, setMissing] = useState(false);
   const [viewerId, setViewerId] = useState<string | null>(null);
+  const [viewerName, setViewerName] = useState("You");
+  const [viewerAvatar, setViewerAvatar] = useState<string | null>(null);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [comments, setComments] = useState<FeedComment[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => {
-      if (!cancelled) setViewerId(data.user?.id ?? null);
+    supabase.auth.getUser().then(async ({ data }) => {
+      if (cancelled) return;
+      const id = data.user?.id ?? null;
+      setViewerId(id);
+      if (!id) return;
+      const profile = await supabase.from("profiles").select("full_name, avatar_url").eq("id", id).maybeSingle();
+      if (cancelled) return;
+      setViewerName(profile.data?.full_name || "You");
+      setViewerAvatar(profile.data?.avatar_url ?? null);
     });
     loadPost(postId).then((next) => {
       if (cancelled) return;
@@ -69,7 +78,9 @@ export function PostScreen({ postId }: { postId: string }) {
     const pending: FeedComment = {
       id: `local-${Date.now()}`,
       postId: id,
-      fullName: "You",
+      userId: viewerId,
+      fullName: viewerName,
+      avatarUrl: viewerAvatar,
       content: content.trim(),
       createdAt: new Date().toISOString(),
     };

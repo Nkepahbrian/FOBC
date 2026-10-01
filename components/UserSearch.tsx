@@ -74,13 +74,13 @@ export function UserSearch() {
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search people"
-          aria-label="Search people"
+          placeholder="Search Adelphoi"
+          aria-label="Search Adelphoi"
           className="h-full w-full bg-transparent text-sm text-white outline-none placeholder:text-zinc-500"
         />
       </label>
 
-      {status === "idle" ? <p className="text-sm text-zinc-400">Search by name to find someone in the community.</p> : null}
+      {status === "idle" ? <p className="text-sm text-zinc-400">Search by name to find Adelphoi in the community.</p> : null}
       {status === "loading" ? <p className="text-sm text-zinc-400">Searching...</p> : null}
       {status === "error" ? (
         <p className="rounded-2xl bg-[#F59E0B]/15 px-4 py-3 text-sm text-[#92400E]">

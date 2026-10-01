@@ -3,9 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Camera } from "lucide-react";
+import { AdelphoiButton } from "@/components/AdelphoiButton";
 import { Wordmark } from "@/components/Logo";
 import { readStale, writeCache } from "@/lib/cache/swr";
-import { readPackedAudio } from "@/lib/feed/api";
+import { readPackedAudio, readPackedThought } from "@/lib/feed/api";
+import { useAdelphoi } from "@/lib/community/adelphoi";
+import { recordNotification } from "@/lib/notifications/store";
+import { cardStyleById } from "@/lib/styles/cards";
 import { createClient } from "@/lib/supabase/client";
 
 type ProfilePost = {
@@ -15,6 +19,7 @@ type ProfilePost = {
   mediaType: string | null;
   tags: string[];
   songTitle: string | null;
+  thoughtStyle: string | null;
 };
 
 type ProfileModel = {
@@ -69,9 +74,27 @@ function showVideoFrame(event: { currentTarget: HTMLVideoElement }) {
   }
 }
 
+function visibleCaption(content: string) {
+  return content.replace(/\s*\[\[[^\]]+\]\]/g, " ").replace(/\s+/g, " ").trim();
+}
+
 function ProfileTile({ post }: { post: ProfilePost }) {
   const [failed, setFailed] = useState(false);
   const video = post.mediaType?.startsWith("video") || (post.mediaUrl ? isVideoUrl(post.mediaUrl) : false);
+  const caption = visibleCaption(post.content);
+  if (!post.mediaUrl && post.thoughtStyle) {
+    const style = cardStyleById(post.thoughtStyle);
+    return (
+      <Link href={`/post/${post.id}`} className="aspect-square overflow-hidden" aria-label={caption || "Thought"}>
+        <span
+          className="flex h-full w-full items-center justify-center px-2 text-center"
+          style={{ background: style.background, color: style.color }}
+        >
+          <span className="line-clamp-6 text-[13px] font-bold leading-tight">{caption || "Blessing"}</span>
+        </span>
+      </Link>
+    );
+  }
   return (
     <Link href={`/post/${post.id}`} className="aspect-square overflow-hidden bg-[#121212]">
       {post.mediaUrl && (video || failed) ? (
@@ -96,14 +119,30 @@ function ProfileTile({ post }: { post: ProfilePost }) {
         />
       ) : (
         <span className="flex h-full items-end p-2 text-left text-[11px] leading-4 text-zinc-300">
-          {post.songTitle || post.content.slice(0, 80) || "Blessing"}
+          {post.songTitle || caption.slice(0, 80) || "Blessing"}
         </span>
       )}
     </Link>
   );
 }
 
+function withThoughts(model: ProfileModel): ProfileModel {
+  return {
+    ...model,
+    grid: (model.grid ?? []).map((post) => {
+      const thought = readPackedThought(post.content || "");
+      return {
+        ...post,
+        content: thought.content,
+        thoughtStyle: post.thoughtStyle || thought.thoughtStyle,
+      };
+    }),
+  };
+}
+
 export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolean }) {
+  const adelphoi = useAdelphoi();
+  const viewingSelf = isOwn || (adelphoi.me !== null && adelphoi.me === userId);
   const [profile, setProfile] = useState<ProfileModel | null>(null);
   const [notice, setNotice] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -144,6 +183,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
         followers,
         grid: posts.map((post) => {
           const packed = readPackedAudio(String(post.content || post.caption || ""));
+          const thought = readPackedThought(packed.content);
           const images = urlList(post.image_urls);
           const extras = [post.image_url, post.media_url].filter((url): url is string => typeof url === "string" && url.length > 0);
           const visual = [...images, ...extras].find((url) => !isAudioUrl(url)) ?? null;
@@ -151,11 +191,12 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
           const mediaType = !visual ? null : storedType?.startsWith("video") || isVideoUrl(visual) ? "video" : "image";
           return {
             id: String(post.id),
-            content: packed.content,
+            content: thought.content,
             mediaUrl: visual,
             mediaType,
             tags: Array.isArray(post.tags) ? (post.tags as string[]) : [],
             songTitle: (post.song_title as string | null) ?? packed.songTitle,
+            thoughtStyle: (post.thought_style as string | null) || thought.thoughtStyle,
           };
         }),
       };
@@ -165,7 +206,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
 
   useEffect(() => {
     const cached = readStale<ProfileModel>(`fobc-profile-${userId}`);
-    if (cached) setProfile(cached);
+    if (cached) setProfile(withThoughts(cached));
     let cancelled = false;
     load(() => cancelled).catch(() => {
       if (!cancelled) setNotice("This profile could not be loaded.");
@@ -221,6 +262,13 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
     }
     setProfile((current) => (current ? { ...current, avatarUrl } : current));
     window.dispatchEvent(new CustomEvent("fobc-avatar", { detail: { userId: user.id, avatarUrl } }));
+    recordNotification({
+      id: `system-avatar-${user.id}-${Date.now()}`,
+      kind: "system",
+      title: "Profile updated",
+      body: "Your profile photo was updated.",
+      href: "/profile",
+    });
     setNotice("Profile photo updated.");
   }
 
@@ -286,7 +334,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
               {initials(profile.fullName) || "F"}
             </span>
           )}
-          {isOwn ? (
+          {viewingSelf ? (
             <>
               <span className="absolute bottom-0 right-0 flex h-6 w-6 items-center justify-center rounded-full bg-[#EAB308] text-black">
                 <Camera className="h-3.5 w-3.5" />
@@ -316,7 +364,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
           </div>
           <div>
             <dt className="text-lg font-semibold">{profile.followers}</dt>
-            <dd className="text-xs text-zinc-400">Followers</dd>
+            <dd className="text-xs text-zinc-400">Adelphoi</dd>
           </div>
         </dl>
       </div>
@@ -345,7 +393,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
       ) : (
         <button
           type="button"
-          disabled={!isOwn}
+          disabled={!viewingSelf}
           onClick={() => {
             setBioDraft(profile.bio);
             setEditingBio(true);
@@ -364,8 +412,23 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
         {profile.instagram ? <p>@{profile.instagram.replace(/^@/, "")}</p> : null}
       </div>
 
+      {!viewingSelf ? (
+        <div className="mt-4">
+          <AdelphoiButton
+            userId={profile.id}
+            name={profile.fullName}
+            variant="prominent"
+            onChange={(connected) => {
+              setProfile((current) =>
+                current ? { ...current, followers: Math.max(0, current.followers + (connected ? 1 : -1)) } : current
+              );
+            }}
+          />
+        </div>
+      ) : null}
+
       <div className="mt-4 grid grid-cols-2 gap-2">
-        {isOwn ? (
+        {viewingSelf ? (
           <Link href="/onboarding" className="flex h-9 items-center justify-center rounded-lg bg-[#121212] text-sm font-semibold">
             Edit profile
           </Link>

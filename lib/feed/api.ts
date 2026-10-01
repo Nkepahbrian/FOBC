@@ -1,6 +1,7 @@
 import type { CreateCategory, FeedComment, FeedPost, LiveEvent, PostCategory } from "@/lib/feed/types";
 import { isConventionActive, isLiveEvent, postCategories } from "@/lib/feed/types";
 import { writeCache } from "@/lib/cache/swr";
+import { recordNotification } from "@/lib/notifications/store";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
@@ -108,7 +109,7 @@ export function readPackedAudio(value: string) {
   };
 }
 
-const thoughtMark = /\n*\[\[fobc-thought:([a-z0-9-]+)\]\]/;
+const thoughtMark = /\s*\[\[fobc-thought:([a-z0-9-]+)\]\]/;
 
 export function readPackedThought(value: string) {
   const match = value.match(thoughtMark);
@@ -438,6 +439,18 @@ export async function persistAmen(post: FeedPost) {
   const nextCount = Math.max(0, post.amenCount + (post.likedByMe ? -1 : 1));
   const supabase = createClient();
   await supabase.from("posts").update({ likes_count: nextCount }).eq("id", post.id);
+  if (!post.likedByMe) {
+    const { userId } = await currentUserId();
+    if (userId && userId !== post.userId) {
+      recordNotification({
+        id: `amen-out-${post.id}-${userId}`,
+        kind: "amen",
+        title: post.fullName,
+        body: `You amened ${post.fullName}'s blessing.`,
+        href: `/post/${post.id}`,
+      });
+    }
+  }
   return true;
 }
 
@@ -490,7 +503,7 @@ export async function loadComments(postId: string): Promise<FeedComment[]> {
     for (const table of tables) {
       const { data, error } = await supabase
         .from(table)
-        .select("id, post_id, content, created_at, profiles (full_name)")
+        .select("id, post_id, user_id, content, created_at")
         .eq("post_id", postId)
         .order("created_at", { ascending: true });
 
@@ -499,12 +512,18 @@ export async function loadComments(postId: string): Promise<FeedComment[]> {
         return [];
       }
 
-      return (data ?? []).map((row) => {
-        const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+      const rows = data ?? [];
+      const ids = Array.from(new Set(rows.map((row) => row.user_id).filter((id): id is string => Boolean(id))));
+      const profiles = ids.length ? await supabase.from("profiles").select("id, full_name, avatar_url").in("id", ids) : { data: [] };
+      const byId = new Map((profiles.data ?? []).map((profile) => [profile.id, profile]));
+      return rows.map((row) => {
+        const profile = byId.get(row.user_id);
         return {
           id: row.id,
           postId: row.post_id,
+          userId: row.user_id ?? null,
           fullName: profile?.full_name || "Blessing member",
+          avatarUrl: profile?.avatar_url ?? null,
           content: row.content,
           createdAt: row.created_at,
         };
@@ -534,10 +553,22 @@ export async function addComment(postId: string, content: string): Promise<FeedC
         .single();
 
       if (!error && data) {
+        const profile = await supabase.from("profiles").select("full_name, avatar_url").eq("id", userId).maybeSingle();
+        const fullName = profile.data?.full_name || "You";
+        recordNotification({
+          id: `comment-out-${data.id}`,
+          kind: "comment",
+          title: fullName,
+          body: `You wrote a blessing: ${text.slice(0, 80)}`,
+          href: `/post/${postId}`,
+          createdAt: data.created_at,
+        });
         return {
           id: data.id,
           postId: data.post_id,
-          fullName: "You",
+          userId,
+          fullName,
+          avatarUrl: profile.data?.avatar_url ?? null,
           content: data.content,
           createdAt: data.created_at,
         };

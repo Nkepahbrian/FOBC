@@ -44,10 +44,20 @@ function displayName(person: Pick<Person, "full_name">) {
   return person.full_name || "Community member";
 }
 
+async function selectProfiles(
+  run: (columns: string) => PromiseLike<{ data: unknown; error: { message: string } | null }>
+) {
+  const full = await run("id, full_name, avatar_url, bio, phone_number");
+  if (!full.error) return (full.data ?? []) as Person[];
+  const basic = await run("id, full_name, avatar_url, bio");
+  return (basic.data ?? []) as Person[];
+}
+
 export function ChatScreen() {
   const [me, setMe] = useState<string | null>(null);
   const [threads, setThreads] = useState<Thread[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
+  const [directory, setDirectory] = useState<Person[]>([]);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<Person | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -97,12 +107,9 @@ export function ChatScreen() {
       return;
     }
 
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("id, full_name, avatar_url, bio, phone_number")
-      .in("id", ids);
+    const profiles = await selectProfiles((columns) => supabase.from("profiles").select(columns).in("id", ids));
 
-    const byId = new Map((profiles ?? []).map((profile) => [profile.id, profile as Person]));
+    const byId = new Map(profiles.map((profile) => [profile.id, profile]));
     setThreads(
       ids.map((id) => {
         const message = latest.get(id)!;
@@ -148,6 +155,7 @@ export function ChatScreen() {
       setMyName(name);
       setMyAvatar(avatar);
       setScriptures(await loadScriptures(userId, name, avatar));
+      setDirectory(await selectProfiles((columns) => supabase.from("profiles").select(columns).neq("id", userId).limit(200)));
     });
   }, [loadThreads]);
 
@@ -176,13 +184,7 @@ export function ChatScreen() {
 
     const timer = window.setTimeout(async () => {
       const supabase = createClient();
-      const { data } = await supabase
-        .from("profiles")
-        .select("id, full_name, avatar_url, bio, phone_number")
-        .ilike("full_name", `%${trimmed}%`)
-        .neq("id", me)
-        .limit(8);
-      setPeople((data ?? []) as Person[]);
+      setPeople(await selectProfiles((columns) => supabase.from("profiles").select(columns).ilike("full_name", `%${trimmed}%`).neq("id", me).limit(8)));
     }, 250);
 
     return () => window.clearTimeout(timer);
@@ -193,23 +195,37 @@ export function ChatScreen() {
     if (!withId || !me) return;
     let cancelled = false;
     const supabase = createClient();
-    supabase
-      .from("profiles")
-      .select("id, full_name, avatar_url, bio, phone_number")
-      .eq("id", withId)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (!cancelled && data) {
-          setActive(data as Person);
-          loadThread(me, data.id);
-        }
-      });
+    selectProfiles((columns) => supabase.from("profiles").select(columns).eq("id", withId).limit(1)).then((rows) => {
+      if (!cancelled && rows[0]) {
+        setActive(rows[0]);
+        loadThread(me, rows[0].id);
+      }
+    });
     return () => {
       cancelled = true;
     };
   }, [loadThread, me, params]);
 
   const activeMessages = useMemo(() => messages, [messages]);
+  const needle = query.trim().toLowerCase();
+  const filteredThreads = useMemo(() => {
+    if (!needle) return threads;
+    return threads.filter((thread) => displayName(thread.person).toLowerCase().includes(needle));
+  }, [needle, threads]);
+  const memberHits = useMemo(() => {
+    if (!needle) return [];
+    const threadIds = new Set(filteredThreads.map((thread) => thread.person.id));
+    const matches = new Map<string, Person>();
+    for (const person of directory) {
+      if (displayName(person).toLowerCase().includes(needle)) matches.set(person.id, person);
+    }
+    for (const person of people) {
+      if (displayName(person).toLowerCase().includes(needle)) matches.set(person.id, person);
+    }
+    return Array.from(matches.values())
+      .filter((person) => !threadIds.has(person.id))
+      .slice(0, 12);
+  }, [directory, filteredThreads, needle, people]);
 
   async function openPerson(person: Person) {
     setActive(person);
@@ -336,8 +352,8 @@ export function ChatScreen() {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search"
-            aria-label="Find someone to message"
+            placeholder="Search Adelphoi"
+            aria-label="Search Adelphoi"
             className="h-full w-full bg-transparent text-sm outline-none placeholder:text-zinc-500"
           />
         </label>
@@ -371,9 +387,10 @@ export function ChatScreen() {
         ))}
       </div>
 
-      {people.length > 0 ? (
+      {memberHits.length > 0 ? (
         <ul className="mt-3 px-4">
-          {people.map((person) => (
+          <li className="pb-1 text-xs font-semibold uppercase tracking-[0.16em] text-[#EAB308]">Adelphoi</li>
+          {memberHits.map((person) => (
             <li key={person.id}>
               <button type="button" onClick={() => openPerson(person)} className="flex w-full items-center gap-3 py-3 text-left">
                 <Avatar person={person} />
@@ -388,12 +405,14 @@ export function ChatScreen() {
       ) : null}
 
       {notice ? <p className="mx-4 mt-3 rounded-2xl bg-[#EAB308]/15 px-4 py-3 text-sm text-[#EAB308]">{notice}</p> : null}
-      {threads.length === 0 && people.length === 0 ? (
-        <p className="px-4 pt-6 text-sm text-zinc-400">Search for a member to start a direct message.</p>
+      {filteredThreads.length === 0 && memberHits.length === 0 ? (
+        <p className="px-4 pt-6 text-sm text-zinc-400">
+          {needle ? "No Adelphoi match that name." : "Search for a member to start a direct message."}
+        </p>
       ) : null}
 
       <ul>
-        {threads.map((thread) => (
+        {filteredThreads.map((thread) => (
           <li key={thread.person.id} className="px-4">
             <div className="flex items-center gap-3 py-3">
               <button type="button" onClick={() => openPerson(thread.person)} className="flex min-w-0 flex-1 items-center gap-3 text-left">

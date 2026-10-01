@@ -42,7 +42,9 @@ export type FeedPost = {
 export type FeedComment = {
   id: string;
   postId: string;
+  userId: string | null;
   fullName: string;
+  avatarUrl: string | null;
   content: string;
   createdAt: string;
 };
