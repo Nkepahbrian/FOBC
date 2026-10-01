@@ -73,7 +73,7 @@ function ProfileTile({ post }: { post: ProfilePost }) {
   const [failed, setFailed] = useState(false);
   const video = post.mediaType?.startsWith("video") || (post.mediaUrl ? isVideoUrl(post.mediaUrl) : false);
   return (
-    <Link href={`/feed?post=${post.id}`} className="aspect-square overflow-hidden bg-[#121212]">
+    <Link href={`/post/${post.id}`} className="aspect-square overflow-hidden bg-[#121212]">
       {post.mediaUrl && (video || failed) ? (
         <video
           src={`${post.mediaUrl}#t=0.1`}

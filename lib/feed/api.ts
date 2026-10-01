@@ -185,6 +185,98 @@ async function selectPosts(supabase: ReturnType<typeof createClient>) {
 
 type EngagementRow = { id?: string; post_id: string; user_id?: string };
 
+function shapePost(
+  row: LoosePost,
+  userId: string | undefined,
+  amens: EngagementRow[],
+  commentRows: EngagementRow[],
+  prayers: EngagementRow[]
+): FeedPost {
+  const mapped = mapPost(
+    {
+      id: row.id,
+      user_id: row.user_id,
+      caption: row.content || row.caption || "",
+      media_url: row.media_url ?? null,
+      media_type: row.media_type ?? null,
+      category: row.category ?? "general",
+      tags: row.tags ?? [],
+      created_at: row.created_at,
+      profiles: row.profiles ?? null,
+      likes: amens
+        .filter((amen) => amen.post_id === row.id && amen.user_id)
+        .map((amen) => ({ user_id: amen.user_id as string })),
+      comments: commentRows
+        .filter((comment) => comment.post_id === row.id && comment.id)
+        .map((comment) => ({ id: comment.id as string })),
+      prayers: prayers
+        .filter((prayer) => prayer.post_id === row.id && prayer.user_id)
+        .map((prayer) => ({ user_id: prayer.user_id as string })),
+    },
+    userId
+  );
+  const packed = readPackedAudio(row.content || row.caption || mapped.content);
+  const audioUrl = row.audio_url || row.song_url || (mapped.mediaType === "audio" ? mapped.mediaUrl : null) || packed.audioUrl;
+  const imageUrl = row.image_url || (row.media_url && row.media_type !== "audio" ? row.media_url : null);
+  const listed = Array.isArray(row.image_urls) ? row.image_urls.filter(Boolean) : [];
+  const imageUrls = listed.length > 0 ? listed : imageUrl ? [imageUrl] : [];
+  return {
+    ...mapped,
+    content: packed.content,
+    imageUrl,
+    imageUrls,
+    location: row.location ?? null,
+    songTitle: row.song_title || packed.songTitle,
+    songArtist: row.song_artist || packed.songArtist,
+    audioUrl,
+    songUrl: audioUrl,
+    songSnippetStart: Number(row.song_snippet_start ?? packed.songSnippetStart) || 0,
+    songSnippetLength: packed.songSnippetLength === 25 ? 25 : 15,
+    pinned: Boolean(row.is_pinned),
+    mediaType: audioUrl && !row.media_url ? "audio" : mapped.mediaType,
+  };
+}
+
+async function engagementForPost(
+  supabase: ReturnType<typeof createClient>,
+  tables: string[],
+  postId: string,
+  columns: string
+) {
+  for (const table of tables) {
+    const result = await supabase.from(table).select(columns).eq("post_id", postId);
+    if (!result.error) return (result.data ?? []) as unknown as EngagementRow[];
+    if (!missingRelation(result.error.message)) return [];
+  }
+  return [] as EngagementRow[];
+}
+
+export async function loadPost(id: string): Promise<FeedPost | null> {
+  if (!getSupabaseEnv().isConfigured) return null;
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  let row: LoosePost | null = null;
+  const joined = await supabase.from("posts").select("*, profiles(full_name, avatar_url)").eq("id", id).maybeSingle();
+  if (!joined.error && joined.data) row = joined.data as unknown as LoosePost;
+  else {
+    const plain = await supabase.from("posts").select("*").eq("id", id).maybeSingle();
+    if (plain.error || !plain.data) return null;
+    const [hydrated] = await attachProfiles(supabase, [plain.data as unknown as LoosePost]);
+    row = hydrated ?? null;
+  }
+  if (!row) return null;
+
+  const [amens, commentRows, prayers] = await Promise.all([
+    engagementForPost(supabase, ["post_amens", "likes"], id, "post_id, user_id"),
+    engagementForPost(supabase, ["post_comments", "comments"], id, "id, post_id"),
+    engagementForPost(supabase, ["prayers"], id, "post_id, user_id"),
+  ]);
+  return shapePost(row, user?.id, amens, commentRows, prayers);
+}
+
 async function selectEngagement(
   supabase: ReturnType<typeof createClient>,
   tables: string[],
@@ -230,61 +322,11 @@ export async function loadCommunity(): Promise<CommunitySnapshot> {
             endsAt: event.ends_at,
           }));
 
-    const posts = rows.map((row) => {
-      const mapped = mapPost(
-        {
-          id: row.id,
-          user_id: row.user_id,
-          caption: row.content || row.caption || "",
-          media_url: row.media_url ?? null,
-          media_type: row.media_type ?? null,
-          category: row.category ?? "general",
-          tags: row.tags ?? [],
-          created_at: row.created_at,
-          profiles: row.profiles ?? null,
-          likes: amens
-            .filter((amen) => amen.post_id === row.id && amen.user_id)
-            .map((amen) => ({ user_id: amen.user_id as string })),
-          comments: commentRows
-            .filter((comment) => comment.post_id === row.id && comment.id)
-            .map((comment) => ({ id: comment.id as string })),
-          prayers: prayers
-            .filter((prayer) => prayer.post_id === row.id && prayer.user_id)
-            .map((prayer) => ({ user_id: prayer.user_id as string })),
-        },
-        user?.id
-      );
-      return mapped;
-    });
+    const posts = rows.map((row) => shapePost(row, user?.id, amens, commentRows, prayers));
 
     const isLiveActive = events.some((event) => isLiveEvent(event));
     const convention = isConventionActive(Date.now(), isLiveActive);
-    const ranked = rankPosts(
-      posts.map((post, index) => {
-        const row = rows[index];
-        const packed = readPackedAudio(row?.content || row?.caption || post.content);
-        const audioUrl = row?.audio_url || row?.song_url || (post.mediaType === "audio" ? post.mediaUrl : null) || packed.audioUrl;
-        const imageUrl = row?.image_url || (row?.media_url && row?.media_type !== "audio" ? row.media_url : null);
-        const listed = Array.isArray(row?.image_urls) ? row.image_urls.filter(Boolean) : [];
-        const imageUrls = listed.length > 0 ? listed : imageUrl ? [imageUrl] : [];
-        return {
-          ...post,
-          content: packed.content,
-          imageUrl,
-          imageUrls,
-          location: row?.location ?? null,
-          songTitle: row?.song_title || packed.songTitle,
-          songArtist: row?.song_artist || packed.songArtist,
-          audioUrl,
-          songUrl: audioUrl,
-          songSnippetStart: Number(row?.song_snippet_start ?? packed.songSnippetStart) || 0,
-          songSnippetLength: packed.songSnippetLength === 25 ? 25 : 15,
-          pinned: Boolean(row?.is_pinned),
-          mediaType: audioUrl && !row?.media_url ? "audio" : post.mediaType,
-        };
-      }),
-      convention
-    );
+    const ranked = rankPosts(posts, convention);
 
     const snapshot = {
       posts: ranked,

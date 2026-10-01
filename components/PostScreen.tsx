@@ -1,0 +1,122 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { FeedCard } from "@/components/FeedCard";
+import { CommentDrawer } from "@/components/CommentDrawer";
+import {
+  addComment,
+  deletePost,
+  loadComments,
+  loadPost,
+  optimisticAmen,
+  optimisticPrayer,
+  persistAmen,
+  persistPrayer,
+  reportPost,
+  updatePostContent,
+} from "@/lib/feed/api";
+import type { FeedComment, FeedPost } from "@/lib/feed/types";
+import { createClient } from "@/lib/supabase/client";
+
+export function PostScreen({ postId }: { postId: string }) {
+  const router = useRouter();
+  const [post, setPost] = useState<FeedPost | null>(null);
+  const [missing, setMissing] = useState(false);
+  const [viewerId, setViewerId] = useState<string | null>(null);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [comments, setComments] = useState<FeedComment[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => {
+      if (!cancelled) setViewerId(data.user?.id ?? null);
+    });
+    loadPost(postId).then((next) => {
+      if (cancelled) return;
+      if (!next) setMissing(true);
+      else setPost(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [postId]);
+
+  async function onAmen(id: string) {
+    if (!post || post.id !== id) return;
+    const next = optimisticAmen(post);
+    setPost(next);
+    const saved = await persistAmen(post);
+    if (!saved) setPost(post);
+  }
+
+  async function onPray(id: string) {
+    if (!post || post.id !== id) return;
+    const next = optimisticPrayer(post);
+    setPost(next);
+    const saved = await persistPrayer(post);
+    if (!saved) setPost(post);
+  }
+
+  async function onToggleComments(id: string) {
+    setCommentsOpen((open) => !open);
+    if (comments.length > 0) return;
+    setComments(await loadComments(id));
+  }
+
+  async function onComment(id: string, content: string) {
+    const pending: FeedComment = {
+      id: `local-${Date.now()}`,
+      postId: id,
+      fullName: "You",
+      content: content.trim(),
+      createdAt: new Date().toISOString(),
+    };
+    setComments((current) => [...current, pending]);
+    setPost((current) => (current ? { ...current, commentCount: current.commentCount + 1 } : current));
+    const saved = await addComment(id, content);
+    if (!saved) {
+      setComments((current) => current.filter((item) => item.id !== pending.id));
+      setPost((current) => (current ? { ...current, commentCount: Math.max(0, current.commentCount - 1) } : current));
+      return;
+    }
+    setComments((current) => current.map((item) => (item.id === pending.id ? saved : item)));
+  }
+
+  if (missing) {
+    return <p className="px-4 pt-8 text-sm text-zinc-400">This post is no longer available.</p>;
+  }
+
+  if (!post) {
+    return <div className="mx-4 mt-6 aspect-[4/5] animate-pulse rounded-2xl bg-[#121212]" />;
+  }
+
+  return (
+    <div className="pt-2">
+      <FeedCard
+        post={post}
+        viewerId={viewerId}
+        commentsOpen={commentsOpen}
+        onToggleComments={onToggleComments}
+        onAmen={onAmen}
+        onPray={onPray}
+        onSaveEdit={async (id, content) => {
+          const message = await updatePostContent(post, content);
+          if (message) return message;
+          setPost({ ...post, content: content.trim() });
+          return null;
+        }}
+        onDelete={async (id) => {
+          const message = await deletePost(id);
+          if (message) return message;
+          router.push("/profile");
+          return null;
+        }}
+        onHide={() => router.push("/profile")}
+        onReport={reportPost}
+      />
+      <CommentDrawer post={commentsOpen ? post : null} comments={comments} onClose={() => setCommentsOpen(false)} onComment={onComment} />
+    </div>
+  );
+}

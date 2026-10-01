@@ -4,6 +4,8 @@ import Link from "next/link";
 import { Heart, MapPin, MessageCircle, MoreHorizontal, Music, Share2, HandHeart, Volume2, VolumeX } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MediaCarousel, type CarouselSlide } from "@/components/MediaCarousel";
+import { MediaLightbox } from "@/components/MediaLightbox";
+import { isSoundOn, setSoundOn } from "@/lib/audio/sound";
 import type { FeedPost } from "@/lib/feed/types";
 import { categoryLabel, formatTimestamp } from "@/lib/feed/types";
 import { cn } from "@/lib/utils";
@@ -43,9 +45,10 @@ export function FeedCard({
 }: FeedCardProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const cardRef = useRef<HTMLElement | null>(null);
-  const manualPause = useRef(false);
+  const visibleRef = useRef(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const [playing, setPlaying] = useState(false);
+  const [soundOn, setSound] = useState(false);
+  const [lightbox, setLightbox] = useState<number | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(post.content);
@@ -57,6 +60,9 @@ export function FeedCard({
   const profileHref = `/profile/${post.userId}`;
   const audioSrc = post.audioUrl || post.songUrl;
   const showMusic = Boolean(audioSrc || post.songTitle);
+  const slides = mediaSlides(post);
+  const hasVideo = slides.some((slide) => slide.type === "video");
+  const showSpeaker = Boolean(audioSrc || hasVideo);
 
   async function share() {
     const url = `${window.location.origin}/feed?post=${post.id}`;
@@ -85,92 +91,101 @@ export function FeedCard({
     function onOther(event: Event) {
       const id = (event as CustomEvent<string>).detail;
       if (id === post.id) return;
-      audioRef.current?.pause();
-      setPlaying(false);
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.muted = true;
+      }
     }
     window.addEventListener("fobc-audio", onOther);
     return () => window.removeEventListener("fobc-audio", onOther);
   }, [post.id]);
 
-  const playAudio = useCallback(() => {
+  const applyPlayback = useCallback((visible: boolean, unlocked: boolean) => {
+    const node = cardRef.current;
+    node?.querySelectorAll<HTMLVideoElement>("video[data-inline]").forEach((video) => {
+      video.muted = Boolean(audioSrc) || !unlocked;
+      if (visible && lightbox === null) video.play().catch(() => undefined);
+      else video.pause();
+    });
     const audio = audioRef.current;
     if (!audio) return;
-    const start = post.songSnippetStart || 0;
-    window.dispatchEvent(new CustomEvent("fobc-audio", { detail: post.id }));
-    if (audio.currentTime < start || (post.songSnippetLength > 0 && audio.currentTime >= start + post.songSnippetLength)) {
-      audio.currentTime = start;
-    }
-    audio.muted = false;
-    audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
-  }, [post.id, post.songSnippetLength, post.songSnippetStart]);
-
-  function toggleAudio() {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (audio.paused) {
-      manualPause.current = false;
-      playAudio();
+    if (visible && unlocked) {
+      const start = post.songSnippetStart || 0;
+      window.dispatchEvent(new CustomEvent("fobc-audio", { detail: post.id }));
+      if (audio.currentTime < start || (post.songSnippetLength > 0 && audio.currentTime >= start + post.songSnippetLength)) {
+        audio.currentTime = start;
+      }
+      audio.muted = false;
+      audio.play().catch(() => undefined);
     } else {
-      manualPause.current = true;
       audio.pause();
-      setPlaying(false);
+      audio.muted = true;
     }
+  }, [audioSrc, lightbox, post.id, post.songSnippetLength, post.songSnippetStart]);
+
+  function toggleSound() {
+    const next = !isSoundOn();
+    setSoundOn(next);
+    setSound(next);
+    applyPlayback(visibleRef.current, next);
   }
 
   useEffect(() => {
+    setSound(isSoundOn());
     const node = cardRef.current;
     if (!node) return;
     const observer = new IntersectionObserver(
       ([entry]) => {
         const visible = entry.isIntersecting && entry.intersectionRatio >= 0.5;
-        node.querySelectorAll("video").forEach((video) => {
-          if (visible) video.play().catch(() => undefined);
-          else video.pause();
-        });
-        if (!audioRef.current) return;
-        if (visible && !manualPause.current) playAudio();
-        else if (!visible) {
-          audioRef.current.pause();
-          manualPause.current = false;
-          setPlaying(false);
-        }
+        visibleRef.current = visible;
+        applyPlayback(visible, isSoundOn());
       },
       { threshold: [0.5] }
     );
     observer.observe(node);
-    return () => observer.disconnect();
-  }, [playAudio]);
+    function onSound(event: Event) {
+      const unlocked = Boolean((event as CustomEvent<boolean>).detail);
+      setSound(unlocked);
+      applyPlayback(visibleRef.current, unlocked);
+    }
+    window.addEventListener("fobc-sound", onSound);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("fobc-sound", onSound);
+    };
+  }, [applyPlayback]);
 
-  const speaker = audioSrc ? (
+  const speaker = showSpeaker ? (
     <button
       type="button"
       onClick={(event) => {
         event.stopPropagation();
-        toggleAudio();
+        toggleSound();
       }}
-      aria-label={playing ? "Mute track" : "Play track"}
+      aria-label={soundOn ? "Mute" : "Unmute"}
+      aria-pressed={!soundOn}
       className="flex h-9 w-9 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur"
     >
-      {playing ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+      {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
     </button>
   ) : null;
 
   return (
     <article ref={cardRef} id={`post-${post.id}`} className="border-b border-white/10 bg-black pb-3">
-      <header className="relative flex items-start gap-3 px-4 py-3">
+      <header className="relative px-4 py-3">
+        <div className="flex items-center gap-3">
         <Link href={profileHref} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-[#EAB308] to-[#FDE68A] p-[2px]" aria-label={post.fullName}>
           {post.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={post.avatarUrl} alt="" loading="lazy" className="h-full w-full rounded-full border border-black object-cover" />
           ) : (
-            <span className="flex h-full w-full items-center justify-center rounded-full border border-black bg-[#121212] text-[11px] font-semibold text-[#EAB308]">
+            <span className="flex h-full w-full items-center justify-center rounded-full border border-black bg-[#121212] text-[11px] font-semibold leading-none text-[#EAB308]">
               {initials(post.fullName)}
             </span>
           )}
         </Link>
-        <div className="min-w-0 flex-1">
-          <div className="flex h-10 items-center justify-between gap-2 leading-none">
-            <Link href={profileHref} className="truncate text-sm font-semibold leading-none text-white">
+        <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+            <Link href={profileHref} className="m-0 block truncate p-0 text-sm font-semibold leading-none text-white">
               {post.fullName}
             </Link>
             <div className="flex shrink-0 items-center gap-1">
@@ -245,7 +260,8 @@ export function FeedCard({
               </div>
             </div>
           </div>
-          <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-400">
+        </div>
+          <div className="mt-1 flex items-center gap-2 pl-[3.25rem] text-xs text-zinc-400">
             {post.location ? (
               <span className="inline-flex min-w-0 items-center gap-1 truncate">
                 <MapPin className="h-3 w-3 shrink-0 text-[#EAB308]" />
@@ -257,18 +273,17 @@ export function FeedCard({
             {post.featured ? <span className="font-semibold text-[#EAB308]">Top Blessing</span> : null}
           </div>
           {showMusic ? (
-            <p className="mt-0.5 flex min-w-0 items-center gap-1 text-xs text-white">
+            <p className="mt-0.5 flex min-w-0 items-center gap-1 pl-[3.25rem] text-xs text-white">
               <Music className="h-3 w-3 shrink-0 text-[#EAB308]" />
               <span className="truncate">
                 {post.songArtist || "FOBC"} • {post.songTitle || "Worship"}
               </span>
             </p>
           ) : null}
-        </div>
       </header>
 
-      {mediaSlides(post).length > 0 ? (
-        <MediaCarousel slides={mediaSlides(post)} onActivate={audioSrc ? toggleAudio : undefined} corner={speaker} />
+      {slides.length > 0 ? (
+        <MediaCarousel slides={slides} muted={Boolean(audioSrc) || !soundOn} onOpen={setLightbox} corner={speaker} />
       ) : null}
 
       <div className="px-4">
@@ -318,19 +333,20 @@ export function FeedCard({
         {reported ? <p className="mt-2 text-xs text-[#EAB308]">Thanks. This post was reported.</p> : null}
         {actionError ? <p className="mt-2 text-xs text-red-300">{actionError}</p> : null}
 
-        {showMusic && mediaSlides(post).length === 0 ? <div className="mt-3">{speaker}</div> : null}
+        {showSpeaker && slides.length === 0 ? <div className="relative mt-3 h-12">{speaker ? <div className="absolute bottom-0 right-0">{speaker}</div> : null}</div> : null}
         {audioSrc ? (
           <audio
             ref={audioRef}
             src={audioSrc}
             loop
             preload="none"
-            muted={false}
+            muted
             onEnded={() => {
               const audio = audioRef.current;
-              if (!audio) return;
+              if (!audio || !isSoundOn()) return;
               audio.currentTime = post.songSnippetStart || 0;
-              audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+              audio.muted = false;
+              audio.play().catch(() => undefined);
             }}
             onTimeUpdate={() => {
               const audio = audioRef.current;
@@ -391,6 +407,9 @@ export function FeedCard({
           </button>
         ) : null}
       </div>
+      {lightbox !== null && slides[lightbox] ? (
+        <MediaLightbox slide={slides[lightbox]} muted={Boolean(audioSrc) || !soundOn} onClose={() => setLightbox(null)} corner={speaker} />
+      ) : null}
       {confirmDelete ? (
         <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/70 sm:items-center">
           <div role="dialog" aria-modal="true" aria-label="Delete post" className="w-full max-w-lg rounded-t-3xl bg-[#121212] p-5 text-white sm:rounded-3xl">

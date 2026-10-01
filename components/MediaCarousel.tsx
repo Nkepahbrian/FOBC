@@ -12,14 +12,16 @@ export function MediaCarousel({
   slides,
   className,
   overlay,
-  onActivate,
+  onOpen,
   corner,
+  muted = true,
 }: {
   slides: CarouselSlide[];
   className?: string;
   overlay?: ReactNode;
-  onActivate?: () => void;
+  onOpen?: (index: number) => void;
   corner?: ReactNode;
+  muted?: boolean;
 }) {
   const scroller = useRef<HTMLDivElement | null>(null);
   const [index, setIndex] = useState(0);
@@ -45,7 +47,9 @@ export function MediaCarousel({
         className="relative"
         onClick={(event) => {
           if ((event.target as HTMLElement).closest("button")) return;
-          onActivate?.();
+          const slide = (event.target as HTMLElement).closest("[data-slide]");
+          const next = Number(slide?.getAttribute("data-slide") ?? 0);
+          onOpen?.(Number.isFinite(next) ? next : 0);
         }}
       >
       <div
@@ -53,15 +57,16 @@ export function MediaCarousel({
         onScroll={onScroll}
         className="flex aspect-[4/5] w-full snap-x snap-mandatory overflow-x-auto rounded-2xl bg-black"
       >
-        {slides.map((slide) => (
-          <div key={slide.url} className="h-full w-full shrink-0 snap-center">
+        {slides.map((slide, slideIndex) => (
+          <div key={slide.url} data-slide={slideIndex} className="h-full w-full shrink-0 snap-center">
             {slide.type === "video" ? (
               <video
                 src={slide.url}
-                muted
+                muted={muted}
                 loop
                 playsInline
                 preload="metadata"
+                data-inline=""
                 className="pointer-events-none h-full w-full rounded-2xl object-cover"
                 style={{ objectFit: "cover" }}
               />
