@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Camera } from "lucide-react";
 import { Wordmark } from "@/components/Logo";
+import { readStale, writeCache } from "@/lib/cache/swr";
 import { readPackedAudio } from "@/lib/feed/api";
 import { createClient } from "@/lib/supabase/client";
 
@@ -48,7 +49,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
     const supabase = createClient();
     const [profileResult, postsResult, followResult] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
-      supabase.from("posts").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+      supabase.from("posts").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(20),
       supabase.from("follows").select("id", { count: "exact", head: true }).eq("following_id", userId),
     ]);
     const row = (profileResult.data ?? {}) as Record<string, string | null>;
@@ -66,7 +67,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
     const followers = followResult.error ? 0 : followResult.count ?? 0;
 
     if (cancelled()) return;
-    setProfile({
+    const model: ProfileModel = {
         id: userId,
         fullName: name,
         bio: row.bio || (isOwn ? "Add a short bio so the community knows your story." : "FOBC member"),
@@ -92,10 +93,14 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
             songTitle: (post.song_title as string | null) ?? packed.songTitle,
           };
         }),
-      });
+      };
+    writeCache(`fobc-profile-${userId}`, model);
+    setProfile(model);
   }, [isOwn, userId]);
 
   useEffect(() => {
+    const cached = readStale<ProfileModel>(`fobc-profile-${userId}`);
+    if (cached) setProfile(cached);
     let cancelled = false;
     load(() => cancelled).catch(() => {
       if (!cancelled) setNotice("This profile could not be loaded.");
@@ -108,7 +113,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
       window.removeEventListener("fobc-post-shared", refresh);
       window.removeEventListener("focus", refresh);
     };
-  }, [load, refreshKey]);
+  }, [load, refreshKey, userId]);
 
   const highlights = useMemo(() => {
     const tags = Array.from(new Set(profile?.grid.flatMap((post) => post.tags) ?? []));
@@ -332,7 +337,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
                   <video src={post.mediaUrl} muted playsInline preload="metadata" className="h-full w-full rounded-sm object-cover" style={{ objectFit: "cover" }} />
                 ) : post.mediaUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={post.mediaUrl} alt="" className="h-full w-full rounded-sm object-cover" style={{ objectFit: "cover" }} />
+                  <img src={post.mediaUrl} alt="" loading="lazy" className="h-full w-full rounded-sm object-cover" style={{ objectFit: "cover" }} />
                 ) : (
                   <span className="flex h-full items-end p-2 text-left text-[11px] leading-4 text-zinc-300">
                     {post.songTitle || post.content.slice(0, 80) || "Blessing"}

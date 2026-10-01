@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Heart, MapPin, MessageCircle, MoreHorizontal, Pause, Play, Share2, HandHeart } from "lucide-react";
+import { Heart, MapPin, MessageCircle, MoreHorizontal, Music, Share2, HandHeart, Volume2, VolumeX } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { MediaCarousel, type CarouselSlide } from "@/components/MediaCarousel";
 import type { FeedPost } from "@/lib/feed/types";
@@ -93,8 +93,13 @@ export function FeedCard({
   function toggleAudio() {
     const audio = audioRef.current;
     if (!audio) return;
+    const start = post.songSnippetStart || 0;
     if (audio.paused) {
       window.dispatchEvent(new CustomEvent("fobc-audio", { detail: post.id }));
+      if (audio.currentTime < start || (post.songSnippetLength > 0 && audio.currentTime >= start + post.songSnippetLength)) {
+        audio.currentTime = start;
+      }
+      audio.muted = false;
       audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
     } else {
       audio.pause();
@@ -102,13 +107,27 @@ export function FeedCard({
     }
   }
 
+  const speaker = audioSrc ? (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        toggleAudio();
+      }}
+      aria-label={playing ? "Mute track" : "Play track"}
+      className="flex h-9 w-9 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur"
+    >
+      {playing ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+    </button>
+  ) : null;
+
   return (
     <article id={`post-${post.id}`} className="border-b border-white/10 bg-black pb-3">
       <header className="relative flex items-center gap-3 px-4 py-3">
         <Link href={profileHref} className="shrink-0 rounded-full bg-gradient-to-tr from-[#EAB308] to-[#FDE68A] p-[2px]" aria-label={post.fullName}>
           {post.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={post.avatarUrl} alt="" className="h-9 w-9 rounded-full border border-black object-cover" />
+            <img src={post.avatarUrl} alt="" loading="lazy" className="h-9 w-9 rounded-full border border-black object-cover" />
           ) : (
             <span className="flex h-9 w-9 items-center justify-center rounded-full border border-black bg-[#121212] text-[11px] font-semibold text-[#EAB308]">
               {initials(post.fullName)}
@@ -203,24 +222,19 @@ export function FeedCard({
             )}
             {post.featured ? <span className="font-semibold text-[#EAB308]">Top Blessing</span> : null}
           </div>
+          {showMusic ? (
+            <p className="mt-0.5 flex min-w-0 items-center gap-1 text-xs text-white">
+              <Music className="h-3 w-3 shrink-0 text-[#EAB308]" />
+              <span className="truncate">
+                {post.songArtist || "FOBC"} • {post.songTitle || "Worship"}
+              </span>
+            </p>
+          ) : null}
         </div>
       </header>
 
       {mediaSlides(post).length > 0 ? (
-        <MediaCarousel
-          slides={mediaSlides(post)}
-          overlay={
-            showMusic ? (
-              <MusicPill
-                title={post.songTitle || "Gospel track"}
-                artist={post.songArtist || "FOBC"}
-                playing={playing}
-                canPlay={Boolean(audioSrc)}
-                onToggle={toggleAudio}
-              />
-            ) : null
-          }
-        />
+        <MediaCarousel slides={mediaSlides(post)} onActivate={audioSrc ? toggleAudio : undefined} corner={speaker} />
       ) : null}
 
       <div className="px-4">
@@ -270,18 +284,23 @@ export function FeedCard({
         {reported ? <p className="mt-2 text-xs text-[#EAB308]">Thanks. This post was reported.</p> : null}
         {actionError ? <p className="mt-2 text-xs text-red-300">{actionError}</p> : null}
 
-        {showMusic && mediaSlides(post).length === 0 ? (
-          <div className="mt-3">
-            <MusicPill
-              title={post.songTitle || "Gospel track"}
-              artist={post.songArtist || "FOBC"}
-              playing={playing}
-              canPlay={Boolean(audioSrc)}
-              onToggle={toggleAudio}
-            />
-          </div>
+        {showMusic && mediaSlides(post).length === 0 ? <div className="mt-3">{speaker}</div> : null}
+        {audioSrc ? (
+          <audio
+            ref={audioRef}
+            src={audioSrc}
+            preload="none"
+            muted={false}
+            onEnded={() => setPlaying(false)}
+            onTimeUpdate={() => {
+              const audio = audioRef.current;
+              if (!audio || !post.songSnippetLength) return;
+              const start = post.songSnippetStart || 0;
+              if (audio.currentTime >= start + post.songSnippetLength) audio.currentTime = start;
+            }}
+            className="hidden"
+          />
         ) : null}
-        {audioSrc ? <audio ref={audioRef} src={audioSrc} preload="metadata" muted={false} onEnded={() => setPlaying(false)} className="hidden" /> : null}
 
         {post.tags.length > 0 ? (
           <ul className="mt-3 flex flex-wrap gap-2">
@@ -375,54 +394,3 @@ function mediaSlides(post: FeedPost): CarouselSlide[] {
   }));
 }
 
-function MusicPill({
-  title,
-  artist,
-  playing,
-  canPlay,
-  onToggle,
-}: {
-  title: string;
-  artist: string;
-  playing: boolean;
-  canPlay: boolean;
-  onToggle: () => void;
-}) {
-  const label = `${title} · ${artist}`;
-  return (
-    <div className="flex items-center gap-2 rounded-full bg-black/75 py-1.5 pl-1.5 pr-2 backdrop-blur-md">
-      <button
-        type="button"
-        onClick={onToggle}
-        disabled={!canPlay}
-        aria-label={playing ? "Pause track" : "Play track"}
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#EAB308] text-black disabled:opacity-40"
-      >
-        {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-      </button>
-      <span className={cn("music-eq flex h-4 items-end gap-[2px]", playing && "is-playing")} aria-hidden>
-        <i />
-        <i />
-        <i />
-        <i />
-      </span>
-      <div className="min-w-0 flex-1 overflow-hidden">
-        <div className={cn("music-marquee-track", !playing && "[animation-play-state:paused]")}>
-          <span className="pr-8 text-xs font-semibold text-white">{label}</span>
-          <span className="pr-8 text-xs font-semibold text-white" aria-hidden>
-            {label}
-          </span>
-        </div>
-      </div>
-      <span
-        className={cn(
-          "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-zinc-500 to-black ring-2 ring-[#EAB308]",
-          playing && "animate-spin [animation-duration:3s]"
-        )}
-        aria-hidden
-      >
-        <span className="h-2 w-2 rounded-full bg-[#EAB308]" />
-      </span>
-    </div>
-  );
-}

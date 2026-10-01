@@ -12,10 +12,14 @@ export function MediaCarousel({
   slides,
   className,
   overlay,
+  onActivate,
+  corner,
 }: {
   slides: CarouselSlide[];
   className?: string;
   overlay?: ReactNode;
+  onActivate?: () => void;
+  corner?: ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement | null>(null);
   const [index, setIndex] = useState(0);
@@ -37,7 +41,13 @@ export function MediaCarousel({
 
   return (
     <div className={className}>
-      <div className="relative">
+      <div
+        className="relative"
+        onClick={(event) => {
+          if ((event.target as HTMLElement).closest("video, button")) return;
+          onActivate?.();
+        }}
+      >
       <div
         ref={scroller}
         onScroll={onScroll}
@@ -49,12 +59,13 @@ export function MediaCarousel({
               <video src={slide.url} controls playsInline className="h-full w-full rounded-2xl object-cover" style={{ objectFit: "cover" }} />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={slide.url} alt="" className="h-full w-full rounded-2xl object-cover" style={{ objectFit: "cover" }} />
+              <img src={slide.url} alt="" loading="lazy" className="h-full w-full rounded-2xl object-cover" style={{ objectFit: "cover" }} />
             )}
           </div>
         ))}
       </div>
       {overlay ? <div className="absolute bottom-3 left-3 right-3">{overlay}</div> : null}
+      {corner ? <div className="absolute bottom-3 right-3 z-10">{corner}</div> : null}
       </div>
       {slides.length > 1 ? (
         <div className="mt-2 flex items-center justify-center gap-1.5" aria-label="Media pages">

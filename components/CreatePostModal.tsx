@@ -46,6 +46,7 @@ export function CreatePostModal() {
   const [suggesting, setSuggesting] = useState(false);
   const [toast, setToast] = useState(false);
   const [listPreviewId, setListPreviewId] = useState("");
+  const [catalog, setCatalog] = useState(() => filterTracks("").filter((track) => track.url));
   const previewRef = useRef<HTMLAudioElement | null>(null);
   const listPreviewRef = useRef<HTMLAudioElement | null>(null);
   const autoplayRef = useRef(false);
@@ -192,7 +193,25 @@ export function CreatePostModal() {
     };
   }, [location, suggesting]);
 
-  const matches = filterTracks(soundQuery);
+  useEffect(() => {
+    const query = soundQuery.trim();
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/music?q=${encodeURIComponent(query)}`);
+        const rows = response.ok ? ((await response.json()) as { title: string; artist: string; url: string }[]) : [];
+        const local = filterTracks(query).filter((track) => track.url);
+        const merged = [...local];
+        for (const row of rows) {
+          if (!row.url) continue;
+          if (!merged.some((item) => item.title === row.title && item.artist === row.artist)) merged.push(row);
+        }
+        setCatalog(merged);
+      } catch {
+        setCatalog(filterTracks(query).filter((track) => track.url));
+      }
+    }, query ? 280 : 0);
+    return () => window.clearTimeout(timer);
+  }, [soundQuery]);
   const localPlaces = filterPlaces(location).map((place) => ({ label: place, value: place }));
   const placeMatches = [
     ...localPlaces,
@@ -279,9 +298,12 @@ export function CreatePostModal() {
       try {
         snippet = await buildSnippet(source, snippetStart, clipLength);
       } catch (trimError) {
-        setPending(false);
-        setError(trimError instanceof Error ? trimError.message : "The audio snippet could not be prepared.");
-        return;
+        if (!presetUrl) {
+          setPending(false);
+          setError(trimError instanceof Error ? trimError.message : "The audio snippet could not be prepared.");
+          return;
+        }
+        snippet = null;
       }
     }
 
@@ -297,6 +319,7 @@ export function CreatePostModal() {
       location: checkInLine(),
       taggedUserIds: tagged.map((friend) => friend.id),
       songSnippetStart: source ? snippetStart : null,
+      songSnippetLength: clipLength,
     });
     setPending(false);
     if (!result.ok) {
@@ -329,6 +352,8 @@ export function CreatePostModal() {
       songArtist: songArtist || null,
       songUrl: result.audioUrl,
       audioUrl: result.audioUrl,
+      songSnippetStart: snippetStart,
+      songSnippetLength: clipLength,
     };
     window.sessionStorage.setItem("fobc-optimistic-post", JSON.stringify(optimistic));
     window.sessionStorage.setItem("fobc-just-shared", result.id || "latest");
@@ -408,7 +433,7 @@ export function CreatePostModal() {
             />
           </label>
           <ul className="mt-2 max-h-52 overflow-y-auto">
-            {matches.map((track) => {
+            {catalog.map((track) => {
               const trackId = `${track.artist}-${track.title}`;
               const selected = songTitle === track.title && songArtist === track.artist;
               return (
@@ -446,12 +471,12 @@ export function CreatePostModal() {
                     className={cn("min-w-0 flex-1 py-1 text-left text-sm", selected ? "text-[#EAB308]" : "text-white")}
                   >
                     <span className="block truncate">{track.title}</span>
-                    <span className="block truncate text-xs text-zinc-400">{track.artist}{track.url ? "" : " · upload a recording to play"}</span>
+                    <span className="block truncate text-xs text-zinc-400">{track.artist}</span>
                   </button>
                 </li>
               );
             })}
-            {matches.length === 0 ? <li className="py-2 text-sm text-zinc-500">No matching sound.</li> : null}
+            {catalog.length === 0 ? <li className="py-2 text-sm text-zinc-500">No matching sound.</li> : null}
           </ul>
           <audio
             ref={listPreviewRef}

@@ -1,5 +1,6 @@
 import type { CreateCategory, FeedComment, FeedPost, LiveEvent, PostCategory } from "@/lib/feed/types";
 import { isConventionActive, isLiveEvent, postCategories } from "@/lib/feed/types";
+import { writeCache } from "@/lib/cache/swr";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
@@ -73,29 +74,50 @@ function mapPost(row: PostRow, userId?: string): FeedPost {
     songArtist: null,
     songUrl: null,
     audioUrl: null,
+    songSnippetStart: 0,
+    songSnippetLength: 15,
   };
 }
 
-const audioMark = /\n*\[\[fobc-audio:([^\]|]+)\|([^\]|]*)\|([^\]|]*)\]\]\s*$/;
+const audioMark = /\n*\[\[fobc-audio:([^\]|]+)\|([^\]|]*)\|([^\]|]*)(?:\|([^\]|]*))?(?:\|([^\]|]*))?\]\]\s*$/;
 
 export function readPackedAudio(value: string) {
   const match = value.match(audioMark);
   if (!match || match.index === undefined) {
-    return { content: value, audioUrl: null as string | null, songTitle: null as string | null, songArtist: null as string | null };
+    return {
+      content: value,
+      audioUrl: null as string | null,
+      songTitle: null as string | null,
+      songArtist: null as string | null,
+      songSnippetStart: 0,
+      songSnippetLength: 15,
+    };
   }
   const title = decodeURIComponent(match[2] || "");
   const artist = decodeURIComponent(match[3] || "");
+  const start = Number(match[4]);
+  const length = Number(match[5]);
   return {
     content: value.slice(0, match.index).trimEnd(),
     audioUrl: decodeURIComponent(match[1]),
     songTitle: title || null,
     songArtist: artist || null,
+    songSnippetStart: Number.isFinite(start) ? start : 0,
+    songSnippetLength: length === 25 ? 25 : 15,
   };
 }
 
-function packAudio(content: string, audioUrl: string | null, title: string, artist: string) {
+function packAudio(
+  content: string,
+  audioUrl: string | null,
+  title: string,
+  artist: string,
+  start = 0,
+  length = 15
+) {
   if (!audioUrl) return content;
-  return `${content}\n\n[[fobc-audio:${encodeURIComponent(audioUrl)}|${encodeURIComponent(title)}|${encodeURIComponent(artist)}]]`;
+  const clip = length === 25 ? 25 : 15;
+  return `${content}\n\n[[fobc-audio:${encodeURIComponent(audioUrl)}|${encodeURIComponent(title)}|${encodeURIComponent(artist)}|${Math.max(0, start)}|${clip}]]`;
 }
 
 function missingRelation(message: string) {
@@ -129,6 +151,7 @@ type LoosePost = {
   song_artist?: string | null;
   song_url?: string | null;
   audio_url?: string | null;
+  song_snippet_start?: number | null;
   is_pinned?: boolean | null;
   profiles?: ProfileEmbed | ProfileEmbed[];
 };
@@ -150,12 +173,12 @@ let joinProfiles = true;
 
 async function selectPosts(supabase: ReturnType<typeof createClient>) {
   if (joinProfiles) {
-    const joined = await supabase.from("posts").select("*, profiles(full_name, avatar_url)").order("created_at", { ascending: false });
+    const joined = await supabase.from("posts").select("*, profiles(full_name, avatar_url)").order("created_at", { ascending: false }).limit(20);
     if (!joined.error) return (joined.data ?? []) as unknown as LoosePost[];
     joinProfiles = false;
   }
 
-  const plain = await supabase.from("posts").select("*").order("created_at", { ascending: false });
+  const plain = await supabase.from("posts").select("*").order("created_at", { ascending: false }).limit(20);
   if (!plain.error) return attachProfiles(supabase, (plain.data ?? []) as unknown as LoosePost[]);
   throw new Error(plain.error.message);
 }
@@ -254,6 +277,8 @@ export async function loadCommunity(): Promise<CommunitySnapshot> {
           songArtist: row?.song_artist || packed.songArtist,
           audioUrl,
           songUrl: audioUrl,
+          songSnippetStart: Number(row?.song_snippet_start ?? packed.songSnippetStart) || 0,
+          songSnippetLength: packed.songSnippetLength === 25 ? 25 : 15,
           pinned: Boolean(row?.is_pinned),
           mediaType: audioUrl && !row?.media_url ? "audio" : post.mediaType,
         };
@@ -261,13 +286,15 @@ export async function loadCommunity(): Promise<CommunitySnapshot> {
       convention
     );
 
-    return {
+    const snapshot = {
       posts: ranked,
       events,
       isLiveActive,
-      mode: "live",
+      mode: "live" as const,
       notice: null,
     };
+    writeCache("fobc-feed", snapshot);
+    return snapshot;
   } catch {
     return emptyFeed("The live feed could not be loaded.");
   }
@@ -344,7 +371,34 @@ async function writeToggle(
 
 export async function persistAmen(post: FeedPost) {
   if (!getSupabaseEnv().isConfigured) return false;
-  return writeToggle(["post_amens", "likes"], post.likedByMe, post.id);
+  const saved = await writeToggle(["post_amens", "likes"], post.likedByMe, post.id);
+  if (!saved) return false;
+  const nextCount = Math.max(0, post.amenCount + (post.likedByMe ? -1 : 1));
+  const supabase = createClient();
+  await supabase.from("posts").update({ likes_count: nextCount }).eq("id", post.id);
+  return true;
+}
+
+export async function loadLeaderboard() {
+  const supabase = createClient();
+  const ranked = await supabase.from("posts").select("*").order("likes_count", { ascending: false }).limit(10);
+  const community = await loadCommunity();
+  if (!ranked.error && ranked.data && ranked.data.length > 0) {
+    const ids = new Set(ranked.data.map((row) => String((row as { id: string }).id)));
+    const matched = community.posts.filter((post) => ids.has(post.id));
+    const posts = (matched.length > 0 ? matched : community.posts)
+      .slice()
+      .sort((left, right) => right.amenCount - left.amenCount || new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .slice(0, 10);
+    writeCache("fobc-leaderboard", posts);
+    return posts;
+  }
+  const posts = community.posts
+    .slice()
+    .sort((left, right) => right.amenCount - left.amenCount || new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .slice(0, 10);
+  writeCache("fobc-leaderboard", posts);
+  return posts;
 }
 
 export async function persistPrayer(post: FeedPost) {
@@ -468,6 +522,7 @@ export async function createCommunityPost(input: {
   location: string;
   taggedUserIds: string[];
   songSnippetStart: number | null;
+  songSnippetLength: number;
 }) {
   if (!getSupabaseEnv().isConfigured) {
     return { ok: false as const, message: "Supabase is not configured yet." };
@@ -513,7 +568,14 @@ export async function createCommunityPost(input: {
     mediaType = "audio";
   }
 
-  const text = packAudio(input.content.trim(), audioUrl, input.songTitle.trim(), input.songArtist.trim());
+  const text = packAudio(
+    input.content.trim(),
+    audioUrl,
+    input.songTitle.trim(),
+    input.songArtist.trim(),
+    input.songSnippetStart ?? 0,
+    input.songSnippetLength
+  );
   const payload: Record<string, unknown> = {
     user_id: user.id,
     content: text,
@@ -575,7 +637,14 @@ export async function updatePostContent(post: FeedPost, content: string) {
   const trimmed = content.trim();
   if (trimmed.length < 2) return "Write a few words before saving.";
 
-  const text = packAudio(trimmed, post.audioUrl || post.songUrl, post.songTitle || "", post.songArtist || "");
+  const text = packAudio(
+    trimmed,
+    post.audioUrl || post.songUrl,
+    post.songTitle || "",
+    post.songArtist || "",
+    post.songSnippetStart,
+    post.songSnippetLength
+  );
   const supabase = createClient();
   const payload: Record<string, unknown> = { content: text, caption: text };
   let { error } = await supabase.from("posts").update(payload).eq("id", post.id);

@@ -34,6 +34,8 @@ export type FeedPost = {
   songArtist: string | null;
   songUrl: string | null;
   audioUrl: string | null;
+  songSnippetStart: number;
+  songSnippetLength: number;
 };
 
 export type FeedComment = {

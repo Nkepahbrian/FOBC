@@ -21,6 +21,7 @@ import {
   type CommunitySnapshot,
 } from "@/lib/feed/api";
 import type { FeedComment, FeedPost } from "@/lib/feed/types";
+import { readStale, writeCache } from "@/lib/cache/swr";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
@@ -92,8 +93,12 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
   }, []);
 
   useEffect(() => {
+    const cached = readStale<CommunitySnapshot>("fobc-feed");
     const optimistic = readOptimisticPost();
-    if (optimistic) {
+    if (cached) {
+      setSnapshot(optimistic ? { ...cached, posts: [optimistic, ...cached.posts.filter((post) => post.id !== optimistic.id)] } : cached);
+      setBooting(false);
+    } else if (optimistic) {
       setSnapshot({ posts: [optimistic], events: [], isLiveActive: false, mode: "live", notice: null });
     }
     refresh().finally(() => setBooting(false));
@@ -150,17 +155,20 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
   }, [refresh, snapshot?.mode]);
 
   function replacePost(postId: string, next: CommunitySnapshot["posts"][number]) {
-    setSnapshot((current) =>
-      current
-        ? { ...current, posts: current.posts.map((post) => (post.id === postId ? next : post)) }
-        : current
-    );
+    setSnapshot((current) => {
+      if (!current) return current;
+      const snapshot = { ...current, posts: current.posts.map((post) => (post.id === postId ? next : post)) };
+      writeCache("fobc-feed", snapshot);
+      return snapshot;
+    });
   }
 
   async function onAmen(postId: string) {
     const post = snapshot?.posts.find((item) => item.id === postId);
     if (!post) return;
-    replacePost(postId, optimisticAmen(post));
+    const nextAmen = optimisticAmen(post);
+    replacePost(postId, nextAmen);
+    window.dispatchEvent(new CustomEvent("fobc-amen", { detail: nextAmen }));
     const saved = await persistAmen(post);
     if (!saved) replacePost(postId, post);
   }
