@@ -52,6 +52,7 @@ export function fallbackPosts(now = Date.now()): FeedPost[] {
       audioUrl: null,
       songSnippetStart: 0,
       songSnippetLength: 15,
+      thoughtStyle: null,
     },
     {
       id: "preview-prayer",
@@ -81,6 +82,7 @@ export function fallbackPosts(now = Date.now()): FeedPost[] {
       audioUrl: null,
       songSnippetStart: 0,
       songSnippetLength: 15,
+      thoughtStyle: null,
     },
     {
       id: "preview-sermon",
@@ -110,6 +112,7 @@ export function fallbackPosts(now = Date.now()): FeedPost[] {
       audioUrl: null,
       songSnippetStart: 0,
       songSnippetLength: 15,
+      thoughtStyle: null,
     },
     {
       id: "preview-general",
@@ -139,6 +142,7 @@ export function fallbackPosts(now = Date.now()): FeedPost[] {
       audioUrl: null,
       songSnippetStart: 0,
       songSnippetLength: 15,
+      thoughtStyle: null,
     },
   ];
 }

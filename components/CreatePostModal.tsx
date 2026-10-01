@@ -13,6 +13,9 @@ import type { CreateCategory, FeedPost } from "@/lib/feed/types";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { MediaCarousel, type CarouselSlide } from "@/components/MediaCarousel";
+import { StylePalette } from "@/components/StylePalette";
+import { ThoughtCard } from "@/components/ThoughtCard";
+import { cardStyleById } from "@/lib/styles/cards";
 
 const mediaTypes = ["image/jpeg", "image/png", "image/webp", "image/gif", "video/mp4", "video/webm", "video/quicktime"];
 const audioTypes = ["audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/webm", "audio/aac", "audio/x-m4a"];
@@ -65,6 +68,7 @@ export function CreatePostModal() {
   const [pending, setPending] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [slides, setSlides] = useState<CarouselSlide[]>([]);
+  const [thoughtStyle, setThoughtStyle] = useState<string | null>(null);
 
   useEffect(() => {
     const next = files.map((file) => ({
@@ -311,7 +315,7 @@ export function CreatePostModal() {
       category,
       content,
       tags,
-      files,
+      files: thoughtStyle ? [] : files,
       audio: snippet,
       songTitle,
       songArtist,
@@ -320,6 +324,7 @@ export function CreatePostModal() {
       taggedUserIds: tagged.map((friend) => friend.id),
       songSnippetStart: source ? snippetStart : null,
       songSnippetLength: clipLength,
+      thoughtStyle,
     });
     setPending(false);
     if (!result.ok) {
@@ -354,6 +359,7 @@ export function CreatePostModal() {
       audioUrl: result.audioUrl,
       songSnippetStart: snippetStart,
       songSnippetLength: clipLength,
+      thoughtStyle,
     };
     window.sessionStorage.setItem("fobc-optimistic-post", JSON.stringify(optimistic));
     window.sessionStorage.setItem("fobc-just-shared", result.id || "latest");
@@ -389,17 +395,46 @@ export function CreatePostModal() {
           ))}
         </div>
 
-        <textarea
-          value={content}
-          onChange={(event) => setContent(event.target.value)}
-          rows={4}
-          maxLength={2000}
-          aria-label="Post"
-          placeholder="Add a text"
-          className="mt-4 w-full resize-none rounded-3xl border border-white/10 bg-black px-4 py-4 text-sm leading-6 text-white outline-none ring-[#EAB308] focus:ring-2"
-        />
+        <button
+          type="button"
+          aria-pressed={Boolean(thoughtStyle)}
+          onClick={() => setThoughtStyle((current) => (current ? null : "red"))}
+          className={cn("mt-4 h-10 rounded-full px-4 text-sm font-semibold", thoughtStyle ? "bg-[#EAB308] text-black" : "bg-black text-white")}
+        >
+          Post a Thought
+        </button>
 
-        <div className="mt-4">
+        {thoughtStyle ? (
+          <div className="mt-4">
+            <ThoughtCard styleId={thoughtStyle} className="min-h-[320px]">
+              <textarea
+                value={content}
+                onChange={(event) => setContent(event.target.value)}
+                rows={4}
+                maxLength={280}
+                aria-label="Thought"
+                placeholder="What's on your mind?"
+                className="w-full resize-none bg-transparent text-center text-3xl font-bold leading-tight outline-none placeholder:text-current placeholder:opacity-60"
+                style={{ color: cardStyleById(thoughtStyle).color }}
+              />
+            </ThoughtCard>
+            <div className="mt-3">
+              <StylePalette value={thoughtStyle} onChange={setThoughtStyle} />
+            </div>
+          </div>
+        ) : (
+          <textarea
+            value={content}
+            onChange={(event) => setContent(event.target.value)}
+            rows={4}
+            maxLength={2000}
+            aria-label="Post"
+            placeholder="Add a message"
+            className="mt-4 w-full resize-none rounded-3xl border border-white/10 bg-black px-4 py-4 text-sm leading-6 text-white outline-none ring-[#EAB308] focus:ring-2"
+          />
+        )}
+
+        <div className={cn("mt-4", thoughtStyle && "hidden")}>
           {slides.length > 0 ? <MediaCarousel slides={slides} /> : null}
           <label className={cn("flex cursor-pointer flex-col items-center justify-center gap-2 bg-black text-sm text-zinc-300", slides.length === 0 ? "aspect-[4/5] rounded-3xl border border-dashed border-white/20" : "mt-3 h-12 rounded-full border border-white/10")}>
             <ImagePlus className="h-6 w-6 text-[#EAB308]" />

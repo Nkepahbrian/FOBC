@@ -36,6 +36,7 @@ export type FeedPost = {
   audioUrl: string | null;
   songSnippetStart: number;
   songSnippetLength: number;
+  thoughtStyle: string | null;
 };
 
 export type FeedComment = {

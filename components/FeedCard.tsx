@@ -5,6 +5,7 @@ import { Heart, MapPin, MessageCircle, MoreHorizontal, Music, Share2, HandHeart,
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MediaCarousel, type CarouselSlide } from "@/components/MediaCarousel";
 import { MediaLightbox } from "@/components/MediaLightbox";
+import { ThoughtCard } from "@/components/ThoughtCard";
 import { isSoundOn, setSoundOn } from "@/lib/audio/sound";
 import type { FeedPost } from "@/lib/feed/types";
 import { categoryLabel, formatTimestamp } from "@/lib/feed/types";
@@ -284,6 +285,9 @@ export function FeedCard({
         </div>
       </header>
 
+      {post.thoughtStyle && slides.length === 0 ? (
+        <ThoughtCard text={post.content} styleId={post.thoughtStyle} className="mx-4" />
+      ) : null}
       {slides.length > 0 ? (
         <MediaCarousel slides={slides} muted={Boolean(audioSrc) || !soundOn} onOpen={setLightbox} corner={speaker} />
       ) : null}
@@ -329,7 +333,7 @@ export function FeedCard({
               </button>
             </div>
           </form>
-        ) : post.content ? (
+        ) : post.content && !post.thoughtStyle ? (
           <p className="mt-3 whitespace-pre-wrap text-[15px] leading-6 text-white">{post.content}</p>
         ) : null}
         {reported ? <p className="mt-2 text-xs text-[#EAB308]">Thanks. This post was reported.</p> : null}

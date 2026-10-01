@@ -748,6 +748,9 @@ alter table public.posts add column if not exists image_url text;
 alter table public.posts add column if not exists likes_count integer not null default 0;
 alter table public.profiles add column if not exists website text;
 alter table public.profiles add column if not exists instagram text;
+alter table public.posts add column if not exists thought_style text;
+alter table public.profiles add column if not exists scripture_text text;
+alter table public.profiles add column if not exists scripture_style text;
 
 create index if not exists posts_pin_amen_idx
   on public.posts (is_pinned desc, amen_count desc, created_at desc);

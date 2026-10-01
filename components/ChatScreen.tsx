@@ -2,9 +2,13 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Phone, Search } from "lucide-react";
+import { Phone, Search, X } from "lucide-react";
+import { StylePalette } from "@/components/StylePalette";
+import { ThoughtCard } from "@/components/ThoughtCard";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
+import { loadScriptures, saveScripture, type ScriptureNote } from "@/lib/scripture/api";
+import { cardStyleById } from "@/lib/styles/cards";
 
 type Person = {
   id: string;
@@ -50,7 +54,14 @@ export function ChatScreen() {
   const [draft, setDraft] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [filter, setFilter] = useState<"All" | "Primary" | "General" | "Requests">("All");
+  const [scriptures, setScriptures] = useState<ScriptureNote[]>([]);
+  const [myName, setMyName] = useState("You");
+  const [myAvatar, setMyAvatar] = useState<string | null>(null);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [reader, setReader] = useState<ScriptureNote | null>(null);
+  const [scriptureDraft, setScriptureDraft] = useState("");
+  const [scriptureStyle, setScriptureStyle] = useState("red");
+  const [sharing, setSharing] = useState(false);
   const params = useSearchParams();
 
   const loadThreads = useCallback(async (userId: string) => {
@@ -126,10 +137,17 @@ export function ChatScreen() {
   useEffect(() => {
     if (!getSupabaseEnv().isConfigured) return;
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => {
+    supabase.auth.getUser().then(async ({ data }) => {
       const userId = data.user?.id ?? null;
       setMe(userId);
-      if (userId) loadThreads(userId);
+      if (!userId) return;
+      loadThreads(userId);
+      const profile = await supabase.from("profiles").select("full_name, avatar_url").eq("id", userId).maybeSingle();
+      const name = profile.data?.full_name || "You";
+      const avatar = profile.data?.avatar_url ?? null;
+      setMyName(name);
+      setMyAvatar(avatar);
+      setScriptures(await loadScriptures(userId, name, avatar));
     });
   }, [loadThreads]);
 
@@ -289,14 +307,25 @@ export function ChatScreen() {
     );
   }
 
-  const visibleThreads = threads.filter((thread) => {
-    const request = /pray|request/i.test(thread.lastMessage);
-    if (filter === "Requests") return request;
-    if (filter === "Primary") return !request;
-    if (filter === "General") return true;
-    return true;
-  });
-  const notes = visibleThreads.slice(0, 6);
+  const mineNote = scriptures.find((note) => note.userId === me) ?? null;
+
+  async function shareScripture() {
+    const text = scriptureDraft.trim();
+    if (!me || text.length < 2) return;
+    setSharing(true);
+    const note: ScriptureNote = {
+      userId: me,
+      fullName: myName,
+      avatarUrl: myAvatar,
+      content: text,
+      style: scriptureStyle,
+    };
+    const message = await saveScripture(note);
+    setScriptures((current) => [note, ...current.filter((item) => item.userId !== me)]);
+    setSharing(false);
+    setComposerOpen(false);
+    setNotice(message);
+  }
 
   return (
     <section className="text-white">
@@ -315,40 +344,29 @@ export function ChatScreen() {
       </div>
 
       <div className="mt-4 flex gap-4 overflow-x-auto px-4 pb-2">
-        <div className="w-16 shrink-0 text-center">
-          <div className="relative mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-dashed border-white/20 bg-[#121212] text-2xl text-[#EAB308]">
-            +
-          </div>
-          <p className="mt-1 text-[11px] text-zinc-400">Your note</p>
-        </div>
-        {notes.map((thread) => {
-          const recent = Date.now() - new Date(thread.lastAt).getTime() < 60 * 60 * 1000;
-          return (
-            <button key={thread.person.id} type="button" onClick={() => openPerson(thread.person)} className="w-16 shrink-0 text-center">
-              <span className="relative mx-auto block w-fit">
-                <Avatar person={thread.person} />
-                {recent ? <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-black bg-emerald-400" /> : null}
-              </span>
-              <span className="mt-1 block truncate text-[11px] text-zinc-300">{displayName(thread.person).split(" ")[0]}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="mt-2 flex gap-2 overflow-x-auto px-4">
-        {(["All", "Primary", "General", "Requests"] as const).map((item) => (
-          <button
-            key={item}
-            type="button"
-            aria-pressed={filter === item}
-            onClick={() => setFilter(item)}
-            className={
-              filter === item
-                ? "h-8 rounded-full bg-white px-3 text-xs font-semibold text-black"
-                : "h-8 rounded-full bg-[#121212] px-3 text-xs font-semibold text-zinc-300"
-            }
+        <button type="button" onClick={() => { setScriptureDraft(mineNote?.content ?? ""); setScriptureStyle(mineNote?.style ?? "red"); setComposerOpen(true); }} className="w-20 shrink-0 text-center">
+          <span
+            className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-dashed border-white/20 text-2xl font-semibold text-[#EAB308]"
+            style={mineNote ? { background: cardStyleById(mineNote.style).background, color: cardStyleById(mineNote.style).color, borderStyle: "solid" } : undefined}
           >
-            {item}
+            {mineNote ? mineNote.content.slice(0, 1) : "+"}
+          </span>
+          <span className="mt-1 block text-[11px] leading-tight text-zinc-400">Your scripture of the week</span>
+        </button>
+        {scriptures.filter((note) => note.userId !== me).map((note) => (
+          <button key={note.userId} type="button" onClick={() => setReader(note)} className="w-16 shrink-0 text-center">
+            <span
+              className="mx-auto flex h-16 w-16 items-center justify-center overflow-hidden rounded-full text-sm font-semibold"
+              style={{ background: cardStyleById(note.style).background, color: cardStyleById(note.style).color }}
+            >
+              {note.avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={note.avatarUrl} alt="" className="h-full w-full object-cover" />
+              ) : (
+                note.fullName.slice(0, 1)
+              )}
+            </span>
+            <span className="mt-1 block truncate text-[11px] text-zinc-300">{note.fullName.split(" ")[0]}</span>
           </button>
         ))}
       </div>
@@ -370,12 +388,12 @@ export function ChatScreen() {
       ) : null}
 
       {notice ? <p className="mx-4 mt-3 rounded-2xl bg-[#EAB308]/15 px-4 py-3 text-sm text-[#EAB308]">{notice}</p> : null}
-      {visibleThreads.length === 0 && people.length === 0 ? (
+      {threads.length === 0 && people.length === 0 ? (
         <p className="px-4 pt-6 text-sm text-zinc-400">Search for a member to start a direct message.</p>
       ) : null}
 
       <ul>
-        {visibleThreads.map((thread) => (
+        {threads.map((thread) => (
           <li key={thread.person.id} className="px-4">
             <div className="flex items-center gap-3 py-3">
               <button type="button" onClick={() => openPerson(thread.person)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
@@ -408,6 +426,55 @@ export function ChatScreen() {
           </li>
         ))}
       </ul>
+      {composerOpen ? (
+        <div className="fixed inset-0 z-40 mx-auto flex w-full max-w-lg items-end bg-black/70">
+          <form
+            className="max-h-[90dvh] w-full overflow-y-auto rounded-t-[2rem] bg-[#121212] px-5 pb-8 pt-4 text-white"
+            onSubmit={(event) => {
+              event.preventDefault();
+              shareScripture();
+            }}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-base font-semibold">Your scripture of the week</h2>
+              <button type="button" aria-label="Close" onClick={() => setComposerOpen(false)} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <ThoughtCard styleId={scriptureStyle}>
+              <textarea
+                value={scriptureDraft}
+                onChange={(event) => setScriptureDraft(event.target.value)}
+                placeholder="Write this week's scripture"
+                aria-label="Scripture"
+                rows={4}
+                maxLength={280}
+                className="w-full resize-none bg-transparent text-center text-2xl font-bold leading-tight outline-none placeholder:text-current placeholder:opacity-60"
+                style={{ color: cardStyleById(scriptureStyle).color }}
+              />
+            </ThoughtCard>
+            <div className="mt-3">
+              <StylePalette value={scriptureStyle} onChange={setScriptureStyle} />
+            </div>
+            <button type="submit" disabled={sharing} className="mt-4 h-11 w-full rounded-full bg-[#EAB308] text-sm font-semibold text-black disabled:opacity-60">
+              {sharing ? "Sharing..." : "Share"}
+            </button>
+          </form>
+        </div>
+      ) : null}
+      {reader ? (
+        <div className="fixed inset-0 z-40 mx-auto flex w-full max-w-lg items-center bg-black/80 px-4">
+          <div className="w-full">
+            <div className="mb-3 flex items-center justify-between text-white">
+              <p className="font-semibold">{reader.fullName}</p>
+              <button type="button" aria-label="Close" onClick={() => setReader(null)} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <ThoughtCard text={reader.content} styleId={reader.style} />
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

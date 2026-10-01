@@ -76,6 +76,7 @@ function mapPost(row: PostRow, userId?: string): FeedPost {
     audioUrl: null,
     songSnippetStart: 0,
     songSnippetLength: 15,
+    thoughtStyle: null,
   };
 }
 
@@ -105,6 +106,22 @@ export function readPackedAudio(value: string) {
     songSnippetStart: Number.isFinite(start) ? start : 0,
     songSnippetLength: length === 25 ? 25 : 15,
   };
+}
+
+const thoughtMark = /\n*\[\[fobc-thought:([a-z0-9-]+)\]\]/;
+
+export function readPackedThought(value: string) {
+  const match = value.match(thoughtMark);
+  if (!match || match.index === undefined) return { content: value, thoughtStyle: null as string | null };
+  return {
+    content: `${value.slice(0, match.index)}${value.slice(match.index + match[0].length)}`.trim(),
+    thoughtStyle: match[1],
+  };
+}
+
+function packThought(content: string, style: string | null) {
+  if (!style) return content;
+  return `${content.trim()}\n\n[[fobc-thought:${style}]]`;
 }
 
 function packAudio(
@@ -152,6 +169,7 @@ type LoosePost = {
   song_url?: string | null;
   audio_url?: string | null;
   song_snippet_start?: number | null;
+  thought_style?: string | null;
   is_pinned?: boolean | null;
   profiles?: ProfileEmbed | ProfileEmbed[];
 };
@@ -216,13 +234,15 @@ function shapePost(
     userId
   );
   const packed = readPackedAudio(row.content || row.caption || mapped.content);
+  const thought = readPackedThought(packed.content);
   const audioUrl = row.audio_url || row.song_url || (mapped.mediaType === "audio" ? mapped.mediaUrl : null) || packed.audioUrl;
   const imageUrl = row.image_url || (row.media_url && row.media_type !== "audio" ? row.media_url : null);
   const listed = Array.isArray(row.image_urls) ? row.image_urls.filter(Boolean) : [];
   const imageUrls = listed.length > 0 ? listed : imageUrl ? [imageUrl] : [];
   return {
     ...mapped,
-    content: packed.content,
+    content: thought.content,
+    thoughtStyle: row.thought_style || thought.thoughtStyle,
     imageUrl,
     imageUrls,
     location: row.location ?? null,
@@ -565,6 +585,7 @@ export async function createCommunityPost(input: {
   taggedUserIds: string[];
   songSnippetStart: number | null;
   songSnippetLength: number;
+  thoughtStyle?: string | null;
 }) {
   if (!getSupabaseEnv().isConfigured) {
     return { ok: false as const, message: "Supabase is not configured yet." };
@@ -611,7 +632,7 @@ export async function createCommunityPost(input: {
   }
 
   const text = packAudio(
-    input.content.trim(),
+    packThought(input.content.trim(), input.thoughtStyle ?? null),
     audioUrl,
     input.songTitle.trim(),
     input.songArtist.trim(),
@@ -635,6 +656,7 @@ export async function createCommunityPost(input: {
     audio_url: audioUrl,
     song_snippet_start: input.songSnippetStart,
     tagged_user_ids: input.taggedUserIds,
+    thought_style: input.thoughtStyle ?? null,
   };
 
   let { error } = await supabase.from("posts").insert(payload);
@@ -658,6 +680,7 @@ export async function createCommunityPost(input: {
     else if (/audio_url/i.test(message)) delete payload.audio_url;
     else if (/song_url/i.test(message)) delete payload.song_url;
     else if (/tagged_user_ids/i.test(message)) delete payload.tagged_user_ids;
+    else if (/thought_style/i.test(message)) delete payload.thought_style;
     else break;
 
     ({ error } = await supabase.from("posts").insert(payload));
@@ -680,7 +703,7 @@ export async function updatePostContent(post: FeedPost, content: string) {
   if (trimmed.length < 2) return "Write a few words before saving.";
 
   const text = packAudio(
-    trimmed,
+    packThought(trimmed, post.thoughtStyle),
     post.audioUrl || post.songUrl,
     post.songTitle || "",
     post.songArtist || "",
