@@ -38,6 +38,71 @@ function initials(name: string) {
     .join("");
 }
 
+function isAudioUrl(url: string) {
+  return /\.(mp3|wav|m4a|aac|ogg)(\?|$)/i.test(url);
+}
+
+function isVideoUrl(url: string) {
+  return /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url);
+}
+
+function urlList(value: unknown) {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (Array.isArray(parsed)) return parsed.filter((item): item is string => typeof item === "string" && item.length > 0);
+  } catch {
+    return [value];
+  }
+  return [value];
+}
+
+function showVideoFrame(event: { currentTarget: HTMLVideoElement }) {
+  const video = event.currentTarget;
+  if (video.currentTime < 0.1) {
+    try {
+      video.currentTime = 0.1;
+    } catch {
+      /* metadata not seekable yet */
+    }
+  }
+}
+
+function ProfileTile({ post }: { post: ProfilePost }) {
+  const [failed, setFailed] = useState(false);
+  const video = post.mediaType?.startsWith("video") || (post.mediaUrl ? isVideoUrl(post.mediaUrl) : false);
+  return (
+    <Link href={`/feed?post=${post.id}`} className="aspect-square overflow-hidden bg-[#121212]">
+      {post.mediaUrl && (video || failed) ? (
+        <video
+          src={`${post.mediaUrl}#t=0.1`}
+          muted
+          playsInline
+          preload="metadata"
+          onLoadedMetadata={showVideoFrame}
+          className="h-full w-full object-cover"
+          style={{ objectFit: "cover" }}
+        />
+      ) : post.mediaUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={post.mediaUrl}
+          alt=""
+          loading="lazy"
+          className="h-full w-full object-cover"
+          style={{ objectFit: "cover" }}
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span className="flex h-full items-end p-2 text-left text-[11px] leading-4 text-zinc-300">
+          {post.songTitle || post.content.slice(0, 80) || "Blessing"}
+        </span>
+      )}
+    </Link>
+  );
+}
+
 export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolean }) {
   const [profile, setProfile] = useState<ProfileModel | null>(null);
   const [notice, setNotice] = useState("");
@@ -79,15 +144,15 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
         followers,
         grid: posts.map((post) => {
           const packed = readPackedAudio(String(post.content || post.caption || ""));
-          const images = Array.isArray(post.image_urls) ? (post.image_urls as string[]).filter(Boolean) : [];
-          const imageUrl = (post.image_url as string | null) || (post.media_url as string | null) || null;
-          const displayImages = images.length ? images : imageUrl ? [imageUrl] : [];
-          const mediaUrl = displayImages[0] ?? null;
-          const mediaType = (post.media_type as string | null) ?? (mediaUrl ? "image" : null);
+          const images = urlList(post.image_urls);
+          const extras = [post.image_url, post.media_url].filter((url): url is string => typeof url === "string" && url.length > 0);
+          const visual = [...images, ...extras].find((url) => !isAudioUrl(url)) ?? null;
+          const storedType = (post.media_type as string | null) ?? null;
+          const mediaType = !visual ? null : storedType?.startsWith("video") || isVideoUrl(visual) ? "video" : "image";
           return {
             id: String(post.id),
             content: packed.content,
-            mediaUrl: mediaType === "audio" ? null : mediaUrl,
+            mediaUrl: visual,
             mediaType,
             tags: Array.isArray(post.tags) ? (post.tags as string[]) : [],
             songTitle: (post.song_title as string | null) ?? packed.songTitle,
@@ -332,18 +397,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
         ) : (
           <div className="-mx-4 grid grid-cols-3 gap-0.5">
             {profile.grid.map((post) => (
-              <Link key={post.id} href={`/feed?post=${post.id}`} className="aspect-square overflow-hidden bg-[#121212]">
-                {post.mediaUrl && post.mediaType?.startsWith("video") ? (
-                  <video src={post.mediaUrl} muted playsInline preload="metadata" className="h-full w-full rounded-sm object-cover" style={{ objectFit: "cover" }} />
-                ) : post.mediaUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={post.mediaUrl} alt="" loading="lazy" className="h-full w-full rounded-sm object-cover" style={{ objectFit: "cover" }} />
-                ) : (
-                  <span className="flex h-full items-end p-2 text-left text-[11px] leading-4 text-zinc-300">
-                    {post.songTitle || post.content.slice(0, 80) || "Blessing"}
-                  </span>
-                )}
-              </Link>
+              <ProfileTile key={post.id} post={post} />
             ))}
           </div>
         )}

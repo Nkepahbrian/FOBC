@@ -44,7 +44,7 @@ export function MediaCarousel({
       <div
         className="relative"
         onClick={(event) => {
-          if ((event.target as HTMLElement).closest("video, button")) return;
+          if ((event.target as HTMLElement).closest("button")) return;
           onActivate?.();
         }}
       >
@@ -56,7 +56,15 @@ export function MediaCarousel({
         {slides.map((slide) => (
           <div key={slide.url} className="h-full w-full shrink-0 snap-center">
             {slide.type === "video" ? (
-              <video src={slide.url} controls playsInline className="h-full w-full rounded-2xl object-cover" style={{ objectFit: "cover" }} />
+              <video
+                src={slide.url}
+                muted
+                loop
+                playsInline
+                preload="metadata"
+                className="pointer-events-none h-full w-full rounded-2xl object-cover"
+                style={{ objectFit: "cover" }}
+              />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={slide.url} alt="" loading="lazy" className="h-full w-full rounded-2xl object-cover" style={{ objectFit: "cover" }} />

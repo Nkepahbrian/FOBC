@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Heart, MapPin, MessageCircle, MoreHorizontal, Music, Share2, HandHeart, Volume2, VolumeX } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { MediaCarousel, type CarouselSlide } from "@/components/MediaCarousel";
 import type { FeedPost } from "@/lib/feed/types";
 import { categoryLabel, formatTimestamp } from "@/lib/feed/types";
@@ -42,6 +42,8 @@ export function FeedCard({
   onReport,
 }: FeedCardProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const cardRef = useRef<HTMLElement | null>(null);
+  const manualPause = useRef(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -90,22 +92,54 @@ export function FeedCard({
     return () => window.removeEventListener("fobc-audio", onOther);
   }, [post.id]);
 
-  function toggleAudio() {
+  const playAudio = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
     const start = post.songSnippetStart || 0;
+    window.dispatchEvent(new CustomEvent("fobc-audio", { detail: post.id }));
+    if (audio.currentTime < start || (post.songSnippetLength > 0 && audio.currentTime >= start + post.songSnippetLength)) {
+      audio.currentTime = start;
+    }
+    audio.muted = false;
+    audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+  }, [post.id, post.songSnippetLength, post.songSnippetStart]);
+
+  function toggleAudio() {
+    const audio = audioRef.current;
+    if (!audio) return;
     if (audio.paused) {
-      window.dispatchEvent(new CustomEvent("fobc-audio", { detail: post.id }));
-      if (audio.currentTime < start || (post.songSnippetLength > 0 && audio.currentTime >= start + post.songSnippetLength)) {
-        audio.currentTime = start;
-      }
-      audio.muted = false;
-      audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+      manualPause.current = false;
+      playAudio();
     } else {
+      manualPause.current = true;
       audio.pause();
       setPlaying(false);
     }
   }
+
+  useEffect(() => {
+    const node = cardRef.current;
+    if (!node) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        const visible = entry.isIntersecting && entry.intersectionRatio >= 0.5;
+        node.querySelectorAll("video").forEach((video) => {
+          if (visible) video.play().catch(() => undefined);
+          else video.pause();
+        });
+        if (!audioRef.current) return;
+        if (visible && !manualPause.current) playAudio();
+        else if (!visible) {
+          audioRef.current.pause();
+          manualPause.current = false;
+          setPlaying(false);
+        }
+      },
+      { threshold: [0.5] }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [playAudio]);
 
   const speaker = audioSrc ? (
     <button
@@ -122,21 +156,21 @@ export function FeedCard({
   ) : null;
 
   return (
-    <article id={`post-${post.id}`} className="border-b border-white/10 bg-black pb-3">
-      <header className="relative flex items-center gap-3 px-4 py-3">
-        <Link href={profileHref} className="shrink-0 rounded-full bg-gradient-to-tr from-[#EAB308] to-[#FDE68A] p-[2px]" aria-label={post.fullName}>
+    <article ref={cardRef} id={`post-${post.id}`} className="border-b border-white/10 bg-black pb-3">
+      <header className="relative flex items-start gap-3 px-4 py-3">
+        <Link href={profileHref} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-[#EAB308] to-[#FDE68A] p-[2px]" aria-label={post.fullName}>
           {post.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={post.avatarUrl} alt="" loading="lazy" className="h-9 w-9 rounded-full border border-black object-cover" />
+            <img src={post.avatarUrl} alt="" loading="lazy" className="h-full w-full rounded-full border border-black object-cover" />
           ) : (
-            <span className="flex h-9 w-9 items-center justify-center rounded-full border border-black bg-[#121212] text-[11px] font-semibold text-[#EAB308]">
+            <span className="flex h-full w-full items-center justify-center rounded-full border border-black bg-[#121212] text-[11px] font-semibold text-[#EAB308]">
               {initials(post.fullName)}
             </span>
           )}
         </Link>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
-            <Link href={profileHref} className="truncate text-sm font-semibold text-white">
+          <div className="flex h-10 items-center justify-between gap-2 leading-none">
+            <Link href={profileHref} className="truncate text-sm font-semibold leading-none text-white">
               {post.fullName}
             </Link>
             <div className="flex shrink-0 items-center gap-1">
@@ -289,9 +323,15 @@ export function FeedCard({
           <audio
             ref={audioRef}
             src={audioSrc}
+            loop
             preload="none"
             muted={false}
-            onEnded={() => setPlaying(false)}
+            onEnded={() => {
+              const audio = audioRef.current;
+              if (!audio) return;
+              audio.currentTime = post.songSnippetStart || 0;
+              audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+            }}
             onTimeUpdate={() => {
               const audio = audioRef.current;
               if (!audio || !post.songSnippetLength) return;
