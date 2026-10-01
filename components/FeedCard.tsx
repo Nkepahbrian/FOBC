@@ -173,7 +173,7 @@ export function FeedCard({
   return (
     <article ref={cardRef} id={`post-${post.id}`} className="border-b border-white/10 bg-black pb-3">
       <header className="relative px-4 py-3">
-        <div className="flex items-center gap-3">
+        <div className="flex items-start gap-2.5">
         <Link href={profileHref} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-[#EAB308] to-[#FDE68A] p-[2px]" aria-label={post.fullName}>
           {post.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -184,9 +184,10 @@ export function FeedCard({
             </span>
           )}
         </Link>
-        <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
-            <Link href={profileHref} className="m-0 block truncate p-0 text-sm font-semibold leading-none text-white">
-              {post.fullName}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <Link href={profileHref} className="m-0 block min-w-0 flex-1 p-0">
+              <h3 className="m-0 truncate p-0 text-sm font-semibold leading-[1.2] text-white">{post.fullName}</h3>
             </Link>
             <div className="flex shrink-0 items-center gap-1">
               <time className="text-xs text-zinc-500" dateTime={post.createdAt}>
@@ -260,8 +261,7 @@ export function FeedCard({
               </div>
             </div>
           </div>
-        </div>
-          <div className="mt-1 flex items-center gap-2 pl-[3.25rem] text-xs text-zinc-400">
+          <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-400">
             {post.location ? (
               <span className="inline-flex min-w-0 items-center gap-1 truncate">
                 <MapPin className="h-3 w-3 shrink-0 text-[#EAB308]" />
@@ -273,13 +273,15 @@ export function FeedCard({
             {post.featured ? <span className="font-semibold text-[#EAB308]">Top Blessing</span> : null}
           </div>
           {showMusic ? (
-            <p className="mt-0.5 flex min-w-0 items-center gap-1 pl-[3.25rem] text-xs text-white">
+            <p className="m-0 mt-0.5 flex min-w-0 items-center gap-1 p-0 text-xs leading-[1.2] text-white">
               <Music className="h-3 w-3 shrink-0 text-[#EAB308]" />
               <span className="truncate">
                 {post.songArtist || "FOBC"} • {post.songTitle || "Worship"}
               </span>
             </p>
           ) : null}
+        </div>
+        </div>
       </header>
 
       {slides.length > 0 ? (

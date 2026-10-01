@@ -55,10 +55,10 @@ export function MediaCarousel({
       <div
         ref={scroller}
         onScroll={onScroll}
-        className="flex aspect-[4/5] w-full snap-x snap-mandatory overflow-x-auto rounded-2xl bg-black"
+        className="flex w-full snap-x snap-mandatory overflow-x-auto rounded-2xl bg-black"
       >
         {slides.map((slide, slideIndex) => (
-          <div key={slide.url} data-slide={slideIndex} className="h-full w-full shrink-0 snap-center">
+          <div key={slide.url} data-slide={slideIndex} className="flex w-full shrink-0 snap-center items-center justify-center bg-black">
             {slide.type === "video" ? (
               <video
                 src={slide.url}
@@ -67,12 +67,18 @@ export function MediaCarousel({
                 playsInline
                 preload="metadata"
                 data-inline=""
-                className="pointer-events-none h-full w-full rounded-2xl object-cover"
-                style={{ objectFit: "cover" }}
+                className="pointer-events-none h-auto max-h-[520px] w-full object-contain md:max-h-[580px]"
+                style={{ objectFit: "contain" }}
               />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={slide.url} alt="" loading="lazy" className="h-full w-full rounded-2xl object-cover" style={{ objectFit: "cover" }} />
+              <img
+                src={slide.url}
+                alt=""
+                loading="lazy"
+                className="block h-auto max-h-[520px] w-full object-contain md:max-h-[580px]"
+                style={{ objectFit: "contain" }}
+              />
             )}
           </div>
         ))}
