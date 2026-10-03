@@ -1,11 +1,12 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Eye, EyeOff } from "lucide-react";
 import { AuthShell } from "@/components/AuthShell";
 import { destinationForUser } from "@/lib/auth/destination";
+import { getSiteUrl } from "@/lib/site";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
@@ -27,6 +28,10 @@ function normalizePhone(input: string) {
 export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("mode") === "signup") setMode("signup");
+  }, []);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -63,7 +68,6 @@ export default function LoginPage() {
     }
 
     const supabase = createClient();
-    const origin = window.location.origin;
     setPending(true);
 
     if (mode === "signup") {
@@ -85,7 +89,7 @@ export default function LoginPage() {
         email: cleanEmail,
         password,
         options: {
-          emailRedirectTo: `${origin}/auth/callback?next=/onboarding`,
+          emailRedirectTo: `${getSiteUrl()}/auth/callback?next=/feed`,
           data: {
             full_name: name,
             ...(phoneNumber ? { phone_number: phoneNumber } : {}),
@@ -102,7 +106,7 @@ export default function LoginPage() {
 
       sessionStorage.setItem(AUTH_EMAIL_KEY, cleanEmail);
       sessionStorage.setItem(AUTH_INTENT_KEY, "signup");
-      router.push(`/verify?email=${encodeURIComponent(cleanEmail)}`);
+      router.push(`/verify-otp?email=${encodeURIComponent(cleanEmail)}`);
       return;
     }
 

@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { Mail } from "lucide-react";
 import { AuthShell } from "@/components/AuthShell";
 import { destinationForUser } from "@/lib/auth/destination";
+import { getSiteUrl } from "@/lib/site";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
@@ -103,7 +104,7 @@ export default function VerifyPage() {
     const { error: resendError } = await supabase.auth.resend({
       type: "signup",
       email,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/onboarding` },
+      options: { emailRedirectTo: `${getSiteUrl()}/auth/callback?next=/feed` },
     });
     setResending(false);
 
