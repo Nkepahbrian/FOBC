@@ -22,6 +22,7 @@ import {
   type CommunitySnapshot,
 } from "@/lib/feed/api";
 import type { FeedComment, FeedPost } from "@/lib/feed/types";
+import { reloadAdelphoi } from "@/lib/community/adelphoi";
 import { readStale, writeCache } from "@/lib/cache/swr";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
@@ -108,6 +109,7 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
     } else if (optimistic) {
       setSnapshot({ posts: [optimistic], events: [], isLiveActive: false, mode: "live", notice: null });
     }
+    reloadAdelphoi().catch((error) => console.error("Could not load follow status:", error));
     refresh().finally(() => setBooting(false));
     const supabase = createClient();
     supabase.auth.getUser().then(async ({ data }) => {

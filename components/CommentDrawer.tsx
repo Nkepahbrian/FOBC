@@ -103,7 +103,7 @@ export function CommentDrawer({ post, comments, viewerId, onClose, onComment, on
     const next = { liked, count: Math.max(0, current.count + (liked ? 1 : -1)) };
     rememberCommentLike(comment.id, next);
     setLikes((previous) => ({ ...previous, [comment.id]: next }));
-    const saved = await toggleCommentAmen(comment.id, current.liked);
+    const saved = await toggleCommentAmen(comment.id, current.liked, next.count);
     if (!saved) {
       rememberCommentLike(comment.id, current);
       setLikes((previous) => ({ ...previous, [comment.id]: current }));

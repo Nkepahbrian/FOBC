@@ -399,9 +399,12 @@ export function CreatePostModal() {
           type="button"
           aria-pressed={Boolean(thoughtStyle)}
           onClick={() => setThoughtStyle((current) => (current ? null : "red"))}
-          className={cn("mt-4 h-10 rounded-full px-4 text-sm font-semibold", thoughtStyle ? "bg-[#EAB308] text-black" : "bg-black text-white")}
+          className={cn(
+            "mt-4 flex min-h-12 w-full items-center justify-center rounded-2xl border px-4 py-3 text-sm font-semibold",
+            thoughtStyle ? "border-[#EAB308] bg-[#EAB308] text-black" : "border-white/25 bg-white/10 text-white"
+          )}
         >
-          Post a Thought
+          Click to post a thought
         </button>
 
         {thoughtStyle ? (

@@ -145,41 +145,83 @@ function missingRelation(message: string) {
 type CommentLikeMemory = { count: number; liked: boolean };
 
 const commentLikeMemory = new Map<string, CommentLikeMemory>();
-const COMMENT_LIKE_STORAGE = "fobc-comment-likes";
+const LIKED_COMMENTS_KEY = "liked_comments";
+let commentLikesHydrated = false;
 
-function readStoredCommentLikes(): Record<string, CommentLikeMemory> {
-  if (typeof window === "undefined") return {};
+function rememberParsed(id: string, state: CommentLikeMemory) {
+  if (!id || !Number.isFinite(state.count)) return;
+  const current = commentLikeMemory.get(id);
+  commentLikeMemory.set(id, current ? { count: Math.max(current.count, state.count), liked: current.liked || state.liked } : state);
+}
+
+function hydrateCommentLikes() {
+  if (commentLikesHydrated || typeof window === "undefined") return;
+  commentLikesHydrated = true;
   try {
-    const raw = window.sessionStorage.getItem(COMMENT_LIKE_STORAGE);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, CommentLikeMemory>;
-    return parsed && typeof parsed === "object" ? parsed : {};
+    const raw = window.localStorage.getItem(LIKED_COMMENTS_KEY) ?? window.sessionStorage.getItem("fobc-comment-likes");
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      for (const id of parsed) rememberParsed(String(id), { count: 1, liked: true });
+      return;
+    }
+    if (!parsed || typeof parsed !== "object") return;
+    const record = parsed as { ids?: unknown; counts?: unknown };
+    if (Array.isArray(record.ids) || record.counts) {
+      const counts = record.counts && typeof record.counts === "object" ? (record.counts as Record<string, unknown>) : {};
+      const idList = Array.isArray(record.ids) ? record.ids.map((id) => String(id)) : [];
+      const ids = new Set(idList);
+      const keys = idList.concat(Object.keys(counts).filter((id) => !ids.has(id)));
+      for (const id of keys) {
+        const count = typeof counts[id] === "number" ? counts[id] : ids.has(id) ? 1 : 0;
+        rememberParsed(id, { count, liked: ids.has(id) });
+      }
+      return;
+    }
+    for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!value || typeof value !== "object") continue;
+      const entry = value as { count?: unknown; liked?: unknown };
+      if (typeof entry.count !== "number" || typeof entry.liked !== "boolean") continue;
+      rememberParsed(id, { count: entry.count, liked: entry.liked });
+    }
   } catch {
-    return {};
+    /* ignore unreadable like cache */
   }
 }
 
 function writeStoredCommentLikes() {
   if (typeof window === "undefined") return;
   try {
-    window.sessionStorage.setItem(COMMENT_LIKE_STORAGE, JSON.stringify(Object.fromEntries(commentLikeMemory)));
-  } catch {
-    /* storage can be unavailable in private browsing */
+    const ids: string[] = [];
+    const counts: Record<string, number> = {};
+    commentLikeMemory.forEach((state, id) => {
+      counts[id] = state.count;
+      if (state.liked) ids.push(id);
+    });
+    window.localStorage.setItem(LIKED_COMMENTS_KEY, JSON.stringify({ ids, counts }));
+  } catch (error) {
+    console.error("Could not save comment likes to localStorage:", error);
   }
 }
 
 export function rememberCommentLike(commentId: string, state: CommentLikeMemory) {
+  hydrateCommentLikes();
   commentLikeMemory.set(commentId, state);
   writeStoredCommentLikes();
 }
 
 export function readCommentLike(commentId: string): CommentLikeMemory | undefined {
-  const live = commentLikeMemory.get(commentId);
-  if (live) return live;
-  const stored = readStoredCommentLikes()[commentId];
-  if (!stored || typeof stored.count !== "number" || typeof stored.liked !== "boolean") return undefined;
-  commentLikeMemory.set(commentId, stored);
-  return stored;
+  hydrateCommentLikes();
+  return commentLikeMemory.get(commentId);
+}
+
+function mergedCommentLike(commentId: string, serverCount: number, serverLiked: boolean, storedCount = 0) {
+  const cached = readCommentLike(commentId);
+  const liked = serverLiked || Boolean(cached?.liked);
+  const count = Math.max(serverCount, storedCount, cached?.count ?? 0, liked ? 1 : 0);
+  const state = { count, liked };
+  rememberCommentLike(commentId, state);
+  return state;
 }
 
 function emptyFeed(notice: string, events: LiveEvent[] = []): CommunitySnapshot {
@@ -603,12 +645,9 @@ export async function loadComments(postId: string): Promise<FeedComment[]> {
         const profile = byId.get(row.user_id);
         const reply = readReply(row.content, "parent_id" in row ? (row.parent_id as string | null) : null);
         const amenRows = likeRows.filter((like) => like.comment_id === row.id);
-        const cached = readCommentLike(row.id);
-        const serverCount = amenRows.length;
-        const serverLiked = Boolean(user && amenRows.some((like) => like.user_id === user.id));
-        const amenCount = likes.error && cached ? cached.count : serverCount;
-        const likedByMe = likes.error && cached ? cached.liked : serverLiked;
-        if (!likes.error) rememberCommentLike(row.id, { count: amenCount, liked: likedByMe });
+        const serverCount = likes.error ? 0 : amenRows.length;
+        const serverLiked = !likes.error && Boolean(user && amenRows.some((like) => like.user_id === user.id));
+        const merged = mergedCommentLike(row.id, serverCount, serverLiked);
         return {
           id: row.id,
           postId: row.post_id,
@@ -618,8 +657,8 @@ export async function loadComments(postId: string): Promise<FeedComment[]> {
           content: reply.content,
           createdAt: row.created_at,
           parentId: reply.parentId,
-          amenCount,
-          likedByMe,
+          amenCount: merged.count,
+          likedByMe: merged.liked,
         };
       });
     }
@@ -630,29 +669,50 @@ export async function loadComments(postId: string): Promise<FeedComment[]> {
   }
 }
 
-export async function toggleCommentAmen(commentId: string, liked: boolean) {
+async function writeCommentLikeCount(supabase: ReturnType<typeof createClient>, commentId: string, count: number) {
+  for (const table of ["comments", "post_comments"]) {
+    const updated = await supabase.from(table).update({ like_count: count }).eq("id", commentId);
+    if (!updated.error) return;
+    if (missingRelation(updated.error.message) || /like_count/i.test(updated.error.message)) continue;
+    console.error(`Could not update ${table}.like_count:`, updated.error);
+    return;
+  }
+}
+
+export async function toggleCommentAmen(commentId: string, liked: boolean, nextCount = 0) {
   const { supabase, userId } = await currentUserId();
   if (!userId) return false;
-  const result = liked
-    ? await supabase.from("comment_likes").delete().eq("comment_id", commentId).eq("user_id", userId)
-    : await supabase.from("comment_likes").insert({ comment_id: commentId, user_id: userId });
-  if (!result.error) return true;
-  if (/duplicate key|unique constraint|23505/i.test(result.error.message)) return true;
-  if (missingRelation(result.error.message)) {
-    console.warn(
-      "comment_likes table is missing. The like count is kept in local state. Run supabase/phase14.sql to persist it.",
-      result.error
-    );
+  try {
+    const result = liked
+      ? await supabase.from("comment_likes").delete().eq("comment_id", commentId).eq("user_id", userId)
+      : await supabase.from("comment_likes").upsert(
+          { comment_id: commentId, user_id: userId },
+          { onConflict: "comment_id,user_id", ignoreDuplicates: true }
+        );
+    if (result.error && !/duplicate key|unique constraint|23505/i.test(result.error.message)) {
+      if (missingRelation(result.error.message)) {
+        console.warn("comment_likes table is missing. The like is kept in localStorage. Run supabase/phase14.sql to persist it.", result.error);
+      } else if (/on conflict|42P10|no unique/i.test(result.error.message) && !liked) {
+        const inserted = await supabase.from("comment_likes").insert({ comment_id: commentId, user_id: userId });
+        if (inserted.error && !/duplicate key|unique constraint|23505/i.test(inserted.error.message)) {
+          console.error("Comment like failed:", inserted.error);
+        }
+      } else {
+        const blocked = /row-level security|permission denied|42501/i.test(`${result.error.code ?? ""} ${result.error.message}`);
+        console.error(
+          blocked
+            ? "Comment like was blocked by Supabase row-level security. The like is kept in localStorage."
+            : "Comment like failed:",
+          result.error
+        );
+      }
+    }
+    await writeCommentLikeCount(supabase, commentId, nextCount);
+    return true;
+  } catch (error) {
+    console.error("Comment like failed:", error);
     return true;
   }
-  const blocked = /row-level security|permission denied|42501/i.test(`${result.error.code ?? ""} ${result.error.message}`);
-  console.error(
-    blocked
-      ? "Comment like was blocked by Supabase row-level security. comment_likes must allow user_id = auth.uid()."
-      : "Comment like failed:",
-    result.error
-  );
-  return false;
 }
 
 export async function addComment(postId: string, content: string, parentId?: string | null): Promise<FeedComment | null> {

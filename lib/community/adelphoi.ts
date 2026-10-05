@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useSyncExternalStore } from "react";
 import { notifyRecipient } from "@/lib/notifications/store";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
@@ -15,10 +15,55 @@ const listeners = new Set<() => void>();
 const serverSnapshot: AdelphoiSnapshot = { me: null, ids: new Set(), ready: false };
 let snapshot: AdelphoiSnapshot = serverSnapshot;
 let loading: Promise<void> | null = null;
+const FOLLOWS_KEY = "user_follows";
+const ACTIVE_FOLLOW_USER = "user_follows_active";
+
+function readFollowFile(): Record<string, string[]> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(FOLLOWS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const file: Record<string, string[]> = {};
+    for (const [userId, value] of Object.entries(parsed)) {
+      if (Array.isArray(value)) file[userId] = value.map((id) => String(id)).filter(Boolean);
+    }
+    return file;
+  } catch {
+    return {};
+  }
+}
+
+function localFollowIds(userId: string) {
+  return new Set(readFollowFile()[userId] ?? []);
+}
+
+function writeLocalFollows(userId: string, ids: Iterable<string>) {
+  if (typeof window === "undefined") return;
+  try {
+    const file = readFollowFile();
+    file[userId] = Array.from(new Set(ids));
+    window.localStorage.setItem(FOLLOWS_KEY, JSON.stringify(file));
+  } catch (error) {
+    console.error("Could not save follows to localStorage:", error);
+  }
+}
 
 function publish(next: AdelphoiSnapshot) {
   snapshot = next;
+  if (next.me) {
+    writeLocalFollows(next.me, next.ids);
+    if (typeof window !== "undefined") window.localStorage.setItem(ACTIVE_FOLLOW_USER, next.me);
+  }
   listeners.forEach((listener) => listener());
+}
+
+function applySavedFollows() {
+  if (typeof window === "undefined" || snapshot.ready) return;
+  const me = window.localStorage.getItem(ACTIVE_FOLLOW_USER);
+  if (!me) return;
+  publish({ me, ids: localFollowIds(me), ready: true });
 }
 
 export function subscribeAdelphoi(listener: () => void) {
@@ -34,40 +79,55 @@ export function getAdelphoiServerSnapshot() {
   return serverSnapshot;
 }
 
-export async function ensureAdelphoiLoaded() {
-  if (snapshot.ready) return;
+async function readFollows() {
+  if (!getSupabaseEnv().isConfigured) {
+    publish({ me: snapshot.me, ids: snapshot.me ? localFollowIds(snapshot.me) : new Set(), ready: true });
+    return;
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const me = user?.id ?? null;
+  if (!me) {
+    publish({ me: null, ids: new Set(), ready: true });
+    return;
+  }
+
+  const saved = localFollowIds(me);
+  const result = await supabase.from("follows").select("following_id").eq("follower_id", me);
+  if (result.error) {
+    console.error("Could not load follows from Supabase. Keeping saved follows.", result.error);
+    publish({ me, ids: saved, ready: true });
+    return;
+  }
+
+  const ids = new Set<string>(saved);
+  for (const row of result.data ?? []) ids.add(String(row.following_id));
+  publish({ me, ids, ready: true });
+}
+
+export async function reloadAdelphoi() {
   if (loading) return loading;
-
-  loading = (async () => {
-    if (!getSupabaseEnv().isConfigured) {
-      publish({ me: null, ids: new Set(), ready: true });
-      return;
-    }
-
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    const me = user?.id ?? null;
-    if (!me) {
-      publish({ me: null, ids: new Set(), ready: true });
-      return;
-    }
-
-    const result = await supabase.from("follows").select("following_id").eq("follower_id", me);
-    const ids = result.error ? new Set<string>() : new Set((result.data ?? []).map((row) => String(row.following_id)));
-    publish({ me, ids, ready: true });
-  })().finally(() => {
+  loading = readFollows().finally(() => {
     loading = null;
   });
-
   return loading;
+}
+
+export async function ensureAdelphoiLoaded() {
+  if (snapshot.ready) return;
+  return reloadAdelphoi();
 }
 
 export function useAdelphoi() {
   const state = useSyncExternalStore(subscribeAdelphoi, getAdelphoiSnapshot, getAdelphoiServerSnapshot);
+  useLayoutEffect(() => {
+    applySavedFollows();
+  }, []);
   useEffect(() => {
-    ensureAdelphoiLoaded().catch(() => undefined);
+    reloadAdelphoi().catch((error) => console.error("Could not load follow status:", error));
   }, []);
   return state;
 }
@@ -93,7 +153,6 @@ export async function toggleAdelphoi(
   targetName: string,
   follow?: boolean
 ): Promise<{ status: "followed" | "unfollowed" | null; warning: string | null }> {
-  let restore: AdelphoiSnapshot | null = null;
   try {
     await ensureAdelphoiLoaded();
     const { me, ids } = snapshot;
@@ -103,18 +162,13 @@ export async function toggleAdelphoi(
 
     const supabase = createClient();
     const shouldFollow = follow ?? !ids.has(targetId);
-    const previous = new Set(ids);
     const next = new Set(ids);
-    restore = { me, ids: previous, ready: true };
 
     if (!shouldFollow) {
       next.delete(targetId);
       publish({ me, ids: next, ready: true });
       const { error } = await supabase.from("follows").delete().eq("follower_id", me).eq("following_id", targetId);
-      if (error) {
-        publish(restore);
-        return { status: null, warning: logFollowError("delete", error) };
-      }
+      if (error) logFollowError("delete", error);
       return { status: "unfollowed", warning: null };
     }
 
@@ -130,8 +184,8 @@ export async function toggleAdelphoi(
     }
     if (error && /duplicate key|unique constraint|23505/i.test(error.message)) error = null;
     if (error) {
-      publish(restore);
-      return { status: null, warning: logFollowError("upsert", error) };
+      logFollowError("upsert", error);
+      return { status: "followed", warning: null };
     }
 
     try {
@@ -147,7 +201,14 @@ export async function toggleAdelphoi(
     return { status: "followed", warning: null };
   } catch (error) {
     console.error("Follow action failed:", error);
-    if (restore) publish(restore);
+    const { me, ids } = snapshot;
+    if (me && follow !== undefined && me !== targetId) {
+      const next = new Set(ids);
+      if (follow) next.add(targetId);
+      else next.delete(targetId);
+      publish({ me, ids: next, ready: true });
+      return { status: follow ? "followed" : "unfollowed", warning: null };
+    }
     return { status: null, warning: "Could not update follow. Try again." };
   }
 }

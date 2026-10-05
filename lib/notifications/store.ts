@@ -82,7 +82,13 @@ function ensureNotificationWatch() {
   supabase.auth.getUser().then(({ data }) => {
     const userId = data.user?.id;
     if (!userId) return;
-    syncNotifications(userId).catch(() => undefined);
+    syncNotifications(userId).catch((error) => console.error("Could not refresh notifications:", error));
+    const refresh = () => {
+      if (document.visibilityState === "hidden") return;
+      syncNotifications(userId).catch((error) => console.error("Could not refresh notifications:", error));
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
     supabase
       .channel(`fobc-notifications-${userId}`)
       .on(
