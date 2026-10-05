@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Heart, X } from "lucide-react";
-import { toggleCommentAmen } from "@/lib/feed/api";
+import { readCommentLike, rememberCommentLike, toggleCommentAmen } from "@/lib/feed/api";
 import type { FeedComment, FeedPost } from "@/lib/feed/types";
 import { cn } from "@/lib/utils";
 
@@ -57,9 +57,13 @@ export function CommentDrawer({ post, comments, viewerId, onClose, onComment, on
   }, [post?.id]);
 
   useEffect(() => {
-    setLikes(
-      Object.fromEntries(commentsRef.current.map((comment) => [comment.id, { count: comment.amenCount, liked: comment.likedByMe }]))
-    );
+    setLikes((previous) => {
+      const next: Record<string, { count: number; liked: boolean }> = {};
+      for (const comment of commentsRef.current) {
+        next[comment.id] = previous[comment.id] ?? readCommentLike(comment.id) ?? { count: comment.amenCount, liked: comment.likedByMe };
+      }
+      return next;
+    });
   }, [likeKey]);
 
   if (!post) return null;
@@ -94,20 +98,20 @@ export function CommentDrawer({ post, comments, viewerId, onClose, onComment, on
   }
 
   async function toggleLike(comment: FeedComment) {
-    const current = likes[comment.id] ?? { count: comment.amenCount, liked: comment.likedByMe };
+    const current = likes[comment.id] ?? readCommentLike(comment.id) ?? { count: comment.amenCount, liked: comment.likedByMe };
     const liked = !current.liked;
-    setLikes((previous) => ({
-      ...previous,
-      [comment.id]: { liked, count: Math.max(0, current.count + (liked ? 1 : -1)) },
-    }));
+    const next = { liked, count: Math.max(0, current.count + (liked ? 1 : -1)) };
+    rememberCommentLike(comment.id, next);
+    setLikes((previous) => ({ ...previous, [comment.id]: next }));
     const saved = await toggleCommentAmen(comment.id, current.liked);
     if (!saved) {
+      rememberCommentLike(comment.id, current);
       setLikes((previous) => ({ ...previous, [comment.id]: current }));
     }
   }
 
   function CommentRow({ comment }: { comment: FeedComment }) {
-    const like = likes[comment.id] ?? { count: comment.amenCount, liked: comment.likedByMe };
+    const like = likes[comment.id] ?? readCommentLike(comment.id) ?? { count: comment.amenCount, liked: comment.likedByMe };
     return (
       <div className="flex items-start gap-3">
         <CommentAvatar comment={comment} />

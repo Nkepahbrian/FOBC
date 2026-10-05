@@ -23,6 +23,36 @@ function normalizePhone(input: string) {
   return `+${compact.replace(/^\+/, "")}`;
 }
 
+function shouldRescueExistingAccount(message: string) {
+  return /user already registered|already been registered|invalid login credentials/i.test(message);
+}
+
+async function saveDisplayName(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  name: string,
+  phoneNumber: string
+) {
+  const named = await supabase.from("profiles").update({ full_name: name }).eq("id", userId);
+  if (named.error) {
+    const created = await supabase.from("profiles").upsert({ id: userId, full_name: name }, { onConflict: "id" });
+    if (created.error) console.error("Could not update profile display name:", created.error);
+  }
+
+  if (phoneNumber) {
+    const phone = await supabase.from("profiles").update({ phone_number: phoneNumber }).eq("id", userId);
+    if (phone.error) console.error("Could not update profile phone number:", phone.error);
+  }
+
+  const metadata = await supabase.auth.updateUser({
+    data: {
+      full_name: name,
+      ...(phoneNumber ? { phone_number: phoneNumber } : {}),
+    },
+  });
+  if (metadata.error) console.error("Could not update account display name:", metadata.error);
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
@@ -94,29 +124,42 @@ export default function LoginPage() {
         },
       });
 
-      if (signUpError) {
+      const existingAccount =
+        Boolean(signUpError && shouldRescueExistingAccount(signUpError.message)) ||
+        Boolean(data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0);
+
+      if (signUpError && !existingAccount) {
         setPending(false);
         setError(signUpError.message);
         return;
       }
 
       let user = data.user;
-      if (!data.session) {
+      let session = data.session;
+
+      if (existingAccount || !session) {
         const signedIn = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
-        if (signedIn.error || !signedIn.data.user) {
+        if (signedIn.error || !signedIn.data.user || !signedIn.data.session) {
           setPending(false);
-          setError(signedIn.error?.message ?? "The account was created, but the session did not start.");
+          setError(signedIn.error?.message ?? "Could not sign in to the existing account.");
           return;
         }
         user = signedIn.data.user;
+        session = signedIn.data.session;
       }
 
       if (user) {
         try {
-          await destinationForUser(supabase, user, "signin");
-        } catch {
-          /* the feed can finish profile details */
+          await saveDisplayName(supabase, user.id, name, phoneNumber);
+        } catch (profileError) {
+          console.error("Could not update profile display name:", profileError);
         }
+      }
+
+      if (!session) {
+        setPending(false);
+        setError("The account was created, but the session did not start.");
+        return;
       }
 
       router.replace("/feed");

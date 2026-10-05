@@ -142,6 +142,46 @@ function missingRelation(message: string) {
   return /does not exist|schema cache|could not find the table|relation/i.test(message);
 }
 
+type CommentLikeMemory = { count: number; liked: boolean };
+
+const commentLikeMemory = new Map<string, CommentLikeMemory>();
+const COMMENT_LIKE_STORAGE = "fobc-comment-likes";
+
+function readStoredCommentLikes(): Record<string, CommentLikeMemory> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.sessionStorage.getItem(COMMENT_LIKE_STORAGE);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, CommentLikeMemory>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredCommentLikes() {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(COMMENT_LIKE_STORAGE, JSON.stringify(Object.fromEntries(commentLikeMemory)));
+  } catch {
+    /* storage can be unavailable in private browsing */
+  }
+}
+
+export function rememberCommentLike(commentId: string, state: CommentLikeMemory) {
+  commentLikeMemory.set(commentId, state);
+  writeStoredCommentLikes();
+}
+
+export function readCommentLike(commentId: string): CommentLikeMemory | undefined {
+  const live = commentLikeMemory.get(commentId);
+  if (live) return live;
+  const stored = readStoredCommentLikes()[commentId];
+  if (!stored || typeof stored.count !== "number" || typeof stored.liked !== "boolean") return undefined;
+  commentLikeMemory.set(commentId, stored);
+  return stored;
+}
+
 function emptyFeed(notice: string, events: LiveEvent[] = []): CommunitySnapshot {
   return {
     posts: [],
@@ -547,14 +587,28 @@ export async function loadComments(postId: string): Promise<FeedComment[]> {
         ids.length ? supabase.from("profiles").select("id, full_name, avatar_url").in("id", ids) : Promise.resolve({ data: [] }),
         commentIds.length
           ? supabase.from("comment_likes").select("comment_id, user_id").in("comment_id", commentIds)
-          : Promise.resolve({ data: [] as { comment_id: string; user_id: string }[] }),
+          : Promise.resolve({ data: [] as { comment_id: string; user_id: string }[], error: null }),
       ]);
+      const likeQueryMissing = Boolean(likes.error && missingRelation(likes.error.message));
+      if (likes.error) {
+        if (likeQueryMissing) {
+          console.warn("comment_likes table is missing. Comment likes will stay in local state until supabase/phase14.sql is applied.", likes.error);
+        } else {
+          console.error("Could not load comment likes:", likes.error);
+        }
+      }
       const byId = new Map((profiles.data ?? []).map((profile) => [profile.id, profile]));
-      const likeRows = likes.data ?? [];
+      const likeRows = likes.error ? [] : (likes.data ?? []);
       return rows.map((row) => {
         const profile = byId.get(row.user_id);
         const reply = readReply(row.content, "parent_id" in row ? (row.parent_id as string | null) : null);
         const amenRows = likeRows.filter((like) => like.comment_id === row.id);
+        const cached = readCommentLike(row.id);
+        const serverCount = amenRows.length;
+        const serverLiked = Boolean(user && amenRows.some((like) => like.user_id === user.id));
+        const amenCount = likes.error && cached ? cached.count : serverCount;
+        const likedByMe = likes.error && cached ? cached.liked : serverLiked;
+        if (!likes.error) rememberCommentLike(row.id, { count: amenCount, liked: likedByMe });
         return {
           id: row.id,
           postId: row.post_id,
@@ -564,8 +618,8 @@ export async function loadComments(postId: string): Promise<FeedComment[]> {
           content: reply.content,
           createdAt: row.created_at,
           parentId: reply.parentId,
-          amenCount: amenRows.length,
-          likedByMe: Boolean(user && amenRows.some((like) => like.user_id === user.id)),
+          amenCount,
+          likedByMe,
         };
       });
     }
@@ -582,7 +636,23 @@ export async function toggleCommentAmen(commentId: string, liked: boolean) {
   const result = liked
     ? await supabase.from("comment_likes").delete().eq("comment_id", commentId).eq("user_id", userId)
     : await supabase.from("comment_likes").insert({ comment_id: commentId, user_id: userId });
-  return !result.error;
+  if (!result.error) return true;
+  if (/duplicate key|unique constraint|23505/i.test(result.error.message)) return true;
+  if (missingRelation(result.error.message)) {
+    console.warn(
+      "comment_likes table is missing. The like count is kept in local state. Run supabase/phase14.sql to persist it.",
+      result.error
+    );
+    return true;
+  }
+  const blocked = /row-level security|permission denied|42501/i.test(`${result.error.code ?? ""} ${result.error.message}`);
+  console.error(
+    blocked
+      ? "Comment like was blocked by Supabase row-level security. comment_likes must allow user_id = auth.uid()."
+      : "Comment like failed:",
+    result.error
+  );
+  return false;
 }
 
 export async function addComment(postId: string, content: string, parentId?: string | null): Promise<FeedComment | null> {

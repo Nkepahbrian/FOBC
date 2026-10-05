@@ -20,6 +20,7 @@ export function AdelphoiButton({
   const { me, ids, ready } = useAdelphoi();
   const [pending, setPending] = useState(false);
   const [override, setOverride] = useState<boolean | null>(null);
+  const [warning, setWarning] = useState("");
   if (ready && (!me || me === userId)) return null;
 
   const connected = override ?? (ready && ids.has(userId));
@@ -41,6 +42,7 @@ export function AdelphoiButton({
         event.preventDefault();
         event.stopPropagation();
         const next = !connected;
+        setWarning("");
         setOverride(next);
         onChange?.(next ? 1 : -1);
         setPending(true);
@@ -50,29 +52,43 @@ export function AdelphoiButton({
           setPending(false);
           setOverride(null);
           onChange?.(next ? -1 : 1);
+          const message = viewer.me ? "" : "Sign in to follow Adelphos.";
+          if (message) {
+            console.error(message);
+            setWarning(message);
+          }
           return;
         }
-        const result = await toggleAdelphoi(userId, name);
+        const result = await toggleAdelphoi(userId, name, next);
         setPending(false);
-        if (!result) {
+        if (!result.status) {
           setOverride(connected);
           onChange?.(next ? -1 : 1);
+          if (result.warning) setWarning(result.warning);
           return;
         }
         setOverride(null);
+        setWarning("");
       }}
+      title={warning || label}
       className={cn(
         "font-semibold disabled:opacity-60",
+        warning && "ring-1 ring-red-400",
         variant === "prominent"
           ? connected
-            ? "h-11 w-full rounded-lg border border-white/20 bg-transparent text-sm text-white"
+            ? "h-11 w-full rounded-lg border border-zinc-700 bg-transparent text-sm text-zinc-200"
             : "h-11 w-full rounded-lg bg-[#EAB308] text-sm text-black"
           : connected
-            ? "h-7 shrink-0 rounded-full border border-white/25 bg-transparent px-2.5 text-[11px] text-white"
+            ? "h-7 shrink-0 rounded-full border border-zinc-700 bg-transparent px-2.5 text-[11px] text-zinc-200"
             : "h-7 shrink-0 rounded-full bg-[#EAB308] px-2.5 text-[11px] text-black"
       )}
     >
       {label}
+      {warning ? (
+        <span role="alert" className="sr-only">
+          {warning}
+        </span>
+      ) : null}
     </button>
   );
 }
