@@ -72,7 +72,7 @@ export function useAdelphoi() {
   return state;
 }
 
-export async function toggleAdelphoi(targetId: string, _targetName: string): Promise<"followed" | "unfollowed" | null> {
+export async function toggleAdelphoi(targetId: string, targetName: string): Promise<"followed" | "unfollowed" | null> {
   await ensureAdelphoiLoaded();
   const { me, ids } = snapshot;
   if (!me || me === targetId || !getSupabaseEnv().isConfigured) return null;
@@ -103,7 +103,7 @@ export async function toggleAdelphoi(targetId: string, _targetName: string): Pro
   await notifyRecipient({
     recipientId: targetId,
     kind: "adelphoi",
-    body: "Started following you.",
+    body: `${targetName.trim() || "Someone"} started following you.`,
     href: `/profile/${me}?from=notifications`,
   });
   return "followed";
