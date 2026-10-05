@@ -5,11 +5,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Camera, MoreHorizontal } from "lucide-react";
 import { AdelphoiButton } from "@/components/AdelphoiButton";
+import { Avatar } from "@/components/Avatar";
 import { Wordmark } from "@/components/Logo";
 import { readStale, writeCache } from "@/lib/cache/swr";
 import { readPackedAudio, readPackedThought } from "@/lib/feed/api";
-import { useAdelphoi } from "@/lib/community/adelphoi";
+import { getAdelphoiSnapshot, useAdelphoi } from "@/lib/community/adelphoi";
 import { recordNotification } from "@/lib/notifications/store";
+import { getSupabaseEnv } from "@/lib/supabase/env";
 import { cardStyleById } from "@/lib/styles/cards";
 import { createClient } from "@/lib/supabase/client";
 
@@ -36,14 +38,6 @@ type ProfileModel = {
   viewerFollows: boolean;
   grid: ProfilePost[];
 };
-
-function initials(name: string) {
-  return name
-    .split(" ")
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
-}
 
 function isAudioUrl(url: string) {
   return /\.(mp3|wav|m4a|aac|ogg)(\?|$)/i.test(url);
@@ -217,8 +211,8 @@ function withThoughts(model: ProfileModel): ProfileModel {
   };
 }
 
-function adelphoiLabel(count: number) {
-  return count === 1 ? "1 Adelphos" : `${count} Adelphoi`;
+function adelphoiWord(count: number) {
+  return count === 1 ? "Adelphos" : "Adelphoi";
 }
 
 export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolean }) {
@@ -312,6 +306,31 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
       window.removeEventListener("focus", refresh);
     };
   }, [load, refreshKey, userId]);
+
+  useEffect(() => {
+    if (!getSupabaseEnv().isConfigured) return;
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`profile-follows-${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "follows", filter: `following_id=eq.${userId}` },
+        async () => {
+          const result = await supabase.from("follows").select("*", { count: "exact", head: true }).eq("following_id", userId);
+          if (result.error || result.count == null) return;
+          const snapshot = getAdelphoiSnapshot();
+          setProfile((current) => {
+            if (!current) return current;
+            const viewerFollows = snapshot.ready && snapshot.me ? snapshot.ids.has(userId) : current.viewerFollows;
+            return { ...current, followers: result.count ?? current.followers, viewerFollows };
+          });
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userId]);
 
   const highlights = useMemo(() => {
     const tags = Array.from(new Set(profile?.grid.flatMap((post) => post.tags) ?? []));
@@ -430,14 +449,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
       <ProfileTopBar showSettings={viewingSelf} />
       <div className="mt-4 flex items-center gap-6">
         <label className="relative cursor-pointer rounded-full bg-gradient-to-tr from-[#EAB308] via-[#FDE68A] to-[#EAB308] p-[3px]">
-          {profile.avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={profile.avatarUrl} alt="" className="h-20 w-20 rounded-full border-2 border-black object-cover" style={{ objectFit: "cover" }} />
-          ) : (
-            <span className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-black bg-[#121212] text-xl font-semibold text-[#EAB308]">
-              {initials(profile.fullName) || "F"}
-            </span>
-          )}
+          <Avatar name={profile.fullName} src={profile.avatarUrl} size="lg" />
           {viewingSelf ? (
             <>
               <span className="absolute bottom-0 right-0 flex h-6 w-6 items-center justify-center rounded-full bg-[#EAB308] text-black">
@@ -458,17 +470,17 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
           ) : null}
         </label>
         <dl className="grid flex-1 grid-cols-3 text-center">
-          <div>
+          <div className="flex flex-col items-center">
             <dt className="text-lg font-semibold">{profile.posts}</dt>
             <dd className="text-xs text-zinc-400">Posts</dd>
           </div>
-          <div>
+          <div className="flex flex-col items-center">
             <dt className="text-lg font-semibold">{profile.amens}</dt>
             <dd className="text-xs text-zinc-400">Amens</dd>
           </div>
-          <div>
-            <dt className="text-sm font-semibold leading-5">{adelphoiLabel(followerCount)}</dt>
-            <dd className="sr-only">Adelphoi</dd>
+          <div className="flex flex-col items-center">
+            <dt className="text-lg font-semibold">{followerCount}</dt>
+            <dd className="text-xs text-zinc-400">{adelphoiWord(followerCount)}</dd>
           </div>
         </dl>
       </div>

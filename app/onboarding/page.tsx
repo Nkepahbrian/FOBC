@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Camera } from "lucide-react";
 import { AuthShell } from "@/components/AuthShell";
+import { Avatar } from "@/components/Avatar";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
@@ -175,9 +176,7 @@ export default function OnboardingPage() {
           <div className="flex items-center gap-4">
             <label className="relative h-20 w-20 shrink-0 cursor-pointer overflow-hidden rounded-full bg-[#0F172A] text-white">
               {preview ? (
-                // Blob and Supabase storage URLs are not known to next/image.
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={preview} alt="" className="h-full w-full object-cover" />
+                <Avatar name={fullName || "FOBC"} src={preview} fill />
               ) : (
                 <span className="flex h-full w-full items-center justify-center">
                   <Camera className="h-6 w-6" />

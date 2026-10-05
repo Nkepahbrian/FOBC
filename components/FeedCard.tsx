@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Heart, MapPin, MessageCircle, MoreHorizontal, Music, Share2, HandHeart, Volume2, VolumeX } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AdelphoiButton } from "@/components/AdelphoiButton";
+import { Avatar } from "@/components/Avatar";
 import { MediaCarousel, type CarouselSlide } from "@/components/MediaCarousel";
 import { MediaLightbox } from "@/components/MediaLightbox";
 import { ThoughtCard } from "@/components/ThoughtCard";
@@ -26,14 +27,6 @@ type FeedCardProps = {
   onHide: (postId: string) => void;
   onReport: (postId: string) => Promise<string | null>;
 };
-
-function initials(name: string) {
-  return name
-    .split(" ")
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
-}
 
 export function FeedCard({
   post,
@@ -193,14 +186,7 @@ export function FeedCard({
       <header className="relative px-4 py-3">
         <div className="flex items-start gap-2.5">
         <Link href={profileHref} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-[#EAB308] to-[#FDE68A] p-[2px]" aria-label={post.fullName}>
-          {post.avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={post.avatarUrl} alt="" loading="lazy" className="h-full w-full rounded-full border border-black object-cover" />
-          ) : (
-            <span className="flex h-full w-full items-center justify-center rounded-full border border-black bg-[#121212] text-[11px] font-semibold leading-none text-[#EAB308]">
-              {initials(post.fullName)}
-            </span>
-          )}
+          <Avatar name={post.fullName} src={post.avatarUrl} fill />
         </Link>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">

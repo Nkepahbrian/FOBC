@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
+import { Avatar } from "@/components/Avatar";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
@@ -13,14 +14,6 @@ type ProfileHit = {
   bio: string | null;
   avatar_url: string | null;
 };
-
-function initials(name: string) {
-  return name
-    .split(" ")
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
-}
 
 export function UserSearch() {
   const router = useRouter();
@@ -101,14 +94,7 @@ export function UserSearch() {
                 onClick={() => router.push(`/profile/${profile.id}`)}
                 className="flex w-full items-center gap-3 py-3 text-left"
               >
-                {profile.avatar_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={profile.avatar_url} alt="" className="h-12 w-12 rounded-full object-cover" />
-                ) : (
-                  <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#0F172A] text-sm font-semibold text-[#FBBF24]">
-                    {initials(name)}
-                  </span>
-                )}
+                <Avatar name={name} src={profile.avatar_url} />
                 <span className="min-w-0">
                   <span className="block truncate font-semibold text-white">{name}</span>
                   <span className="block truncate text-sm text-zinc-400">{profile.bio || "Member of FOBC"}</span>

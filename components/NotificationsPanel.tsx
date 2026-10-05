@@ -12,6 +12,7 @@ const kindLabel: Record<NotificationKind, string> = {
   comment: "Blessing",
   share: "Share",
   adelphoi: "Adelphoi",
+  follow: "Follow",
   system: "Update",
 };
 
@@ -54,7 +55,9 @@ export function NotificationsPanel({ active = true }: { active?: boolean }) {
       {items.map((item) => {
         const content = (
           <>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#EAB308]">{kindLabel[item.kind]}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#EAB308]">
+              {item.kind === "follow" || item.body === "started following you" ? "Follow" : kindLabel[item.kind]}
+            </p>
             <p className="mt-1 text-sm font-semibold text-white">{item.title}</p>
             <p className="mt-0.5 text-sm leading-5 text-zinc-300">{item.body}</p>
           </>

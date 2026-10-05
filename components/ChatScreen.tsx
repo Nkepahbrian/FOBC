@@ -1,8 +1,10 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Search, X } from "lucide-react";
+import { Avatar } from "@/components/Avatar";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { StylePalette } from "@/components/StylePalette";
 import { ThoughtCard } from "@/components/ThoughtCard";
@@ -33,14 +35,6 @@ type Thread = {
   lastMessage: string;
   lastAt: string;
 };
-
-function initials(name: string) {
-  return name
-    .split(" ")
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
-}
 
 function displayName(person: Pick<Person, "full_name">) {
   return person.full_name || "Community member";
@@ -168,7 +162,7 @@ export function ChatScreen() {
     if (!me || !getSupabaseEnv().isConfigured) return;
     const supabase = createClient();
     const channel = supabase
-      .channel("fobc-chat")
+      .channel("public:messages")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
         const row = payload.new as ChatMessage;
         const inThread =
@@ -342,11 +336,13 @@ export function ChatScreen() {
           <button type="button" onClick={closeConversation} className="text-sm font-semibold text-[#EAB308]">
             Back
           </button>
-          <Avatar person={active} />
-          <div className="min-w-0">
-            <h1 className="truncate text-base font-semibold">{name}</h1>
-            <p className="truncate text-xs text-zinc-400">{typingName ? `${typingName} is typing...` : active.bio || "Active now"}</p>
-          </div>
+          <Link href={`/profile/${active.id}`} className="flex min-w-0 flex-1 items-center gap-3">
+            <Avatar name={name} src={active.avatar_url} />
+            <div className="min-w-0">
+              <h1 className="truncate text-base font-semibold">{name}</h1>
+              <p className="truncate text-xs text-zinc-400">{typingName ? `${typingName} is typing...` : active.bio || "Active now"}</p>
+            </div>
+          </Link>
         </div>
         <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto">
           {activeMessages.length === 0 ? <p className="text-sm text-zinc-400">Say hello and start the conversation.</p> : null}
@@ -355,7 +351,11 @@ export function ChatScreen() {
             const sender = mine ? { id: me || "", full_name: myName, avatar_url: myAvatar, bio: null } : active;
             return (
               <div key={message.id} className={mine ? "flex items-end justify-end gap-2" : "flex items-end justify-start gap-2"}>
-                {mine ? null : <Avatar person={sender} size="sm" />}
+                {mine ? null : (
+                  <Link href={`/profile/${sender.id}`} aria-label={displayName(sender)} className="shrink-0">
+                    <Avatar name={displayName(sender)} src={sender.avatar_url} size="sm" />
+                  </Link>
+                )}
                 <p
                   className={
                     mine
@@ -365,7 +365,11 @@ export function ChatScreen() {
                 >
                   {message.content}
                 </p>
-                {mine ? <Avatar person={sender} size="sm" /> : null}
+                {mine ? (
+                  <Link href={me ? `/profile/${me}` : "/profile"} aria-label={myName} className="shrink-0">
+                    <Avatar name={myName} src={myAvatar} size="sm" />
+                  </Link>
+                ) : null}
               </div>
             );
           })}
@@ -445,8 +449,7 @@ export function ChatScreen() {
               style={{ background: cardStyleById(note.style).background, color: cardStyleById(note.style).color }}
             >
               {note.avatarUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={note.avatarUrl} alt="" className="h-full w-full object-cover" />
+                <Avatar name={note.fullName} src={note.avatarUrl} fill />
               ) : (
                 note.fullName.slice(0, 1)
               )}
@@ -462,7 +465,7 @@ export function ChatScreen() {
           {memberHits.map((person) => (
             <li key={person.id}>
               <button type="button" onClick={() => openPerson(person)} className="flex w-full items-center gap-3 py-3 text-left">
-                <Avatar person={person} />
+                <Avatar name={displayName(person)} src={person.avatar_url} />
                 <span className="min-w-0">
                   <span className="block truncate font-semibold">{displayName(person)}</span>
                   <span className="block truncate text-sm text-zinc-400">{person.bio || "Start a conversation"}</span>
@@ -485,7 +488,7 @@ export function ChatScreen() {
           <li key={thread.person.id} className="px-4">
             <div className="flex items-center gap-3 py-3">
               <button type="button" onClick={() => openPerson(thread.person)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                <Avatar person={thread.person} />
+                <Avatar name={displayName(thread.person)} src={thread.person.avatar_url} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center justify-between gap-2">
                     <span className="truncate font-semibold">{displayName(thread.person)}</span>
@@ -550,27 +553,5 @@ export function ChatScreen() {
         </div>
       ) : null}
     </section>
-  );
-}
-
-function Avatar({ person, size = "md" }: { person: Person; size?: "sm" | "md" }) {
-  const [broken, setBroken] = useState(false);
-  const name = displayName(person);
-  const box = size === "sm" ? "h-8 w-8 text-xs" : "h-12 w-12 text-sm";
-  if (person.avatar_url && !broken) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={person.avatar_url}
-        alt=""
-        onError={() => setBroken(true)}
-        className={`${box} shrink-0 rounded-full object-cover`}
-      />
-    );
-  }
-  return (
-    <span className={`flex ${box} shrink-0 items-center justify-center rounded-full bg-[#121212] font-semibold text-[#EAB308]`}>
-      {initials(name) || "F"}
-    </span>
   );
 }

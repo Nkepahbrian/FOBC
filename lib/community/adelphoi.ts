@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useSyncExternalStore } from "react";
-import { notifyRecipient } from "@/lib/notifications/store";
+import { notifyFollow } from "@/lib/notifications/store";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
@@ -150,7 +150,7 @@ function logFollowError(action: "upsert" | "delete", error: { message: string; c
 
 export async function toggleAdelphoi(
   targetId: string,
-  targetName: string,
+  _targetName: string,
   follow?: boolean
 ): Promise<{ status: "followed" | "unfollowed" | null; warning: string | null }> {
   try {
@@ -189,12 +189,7 @@ export async function toggleAdelphoi(
     }
 
     try {
-      await notifyRecipient({
-        recipientId: targetId,
-        kind: "adelphoi",
-        body: `${targetName.trim() || "Someone"} started following you.`,
-        href: `/profile/${me}?from=notifications`,
-      });
+      await notifyFollow(targetId);
     } catch (notifyError) {
       console.error("Follow saved, but the notification could not be sent:", notifyError);
     }

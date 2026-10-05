@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Heart, X } from "lucide-react";
+import { Avatar } from "@/components/Avatar";
 import { readCommentLike, rememberCommentLike, toggleCommentAmen } from "@/lib/feed/api";
 import type { FeedComment, FeedPost } from "@/lib/feed/types";
 import { cn } from "@/lib/utils";
@@ -16,23 +17,8 @@ type CommentDrawerProps = {
   onDelete?: (comment: FeedComment) => void;
 };
 
-function initials(name: string) {
-  return name
-    .split(" ")
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
-}
-
 function CommentAvatar({ comment }: { comment: FeedComment }) {
-  const face = comment.avatarUrl ? (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={comment.avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
-  ) : (
-    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black text-[11px] font-semibold text-[#EAB308]">
-      {initials(comment.fullName) || "A"}
-    </span>
-  );
+  const face = <Avatar name={comment.fullName} src={comment.avatarUrl} size="sm" />;
 
   if (!comment.userId) return face;
   return (

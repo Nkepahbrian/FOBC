@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search, X } from "lucide-react";
+import { Avatar } from "@/components/Avatar";
 import { readPackedAudio, readPackedThought } from "@/lib/feed/api";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
@@ -20,14 +21,6 @@ type PostHit = {
   author: string;
   snippet: string;
 };
-
-function initials(name: string) {
-  return name
-    .split(" ")
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
-}
 
 function snippet(value: string) {
   const packed = readPackedAudio(value || "");
@@ -163,14 +156,7 @@ export function SearchDrawer({ onClose }: { onClose: () => void }) {
                   return (
                     <li key={member.id}>
                       <button type="button" onClick={() => open(`/profile/${member.id}`)} className="flex w-full items-center gap-3 py-3 text-left">
-                        {member.avatar_url ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={member.avatar_url} alt="" className="h-10 w-10 rounded-full object-cover" />
-                        ) : (
-                          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-black text-xs font-semibold text-[#EAB308]">
-                            {initials(name) || "A"}
-                          </span>
-                        )}
+                        <Avatar name={name} src={member.avatar_url} size="base" />
                         <span className="min-w-0">
                           <span className="block truncate text-sm font-semibold">{name}</span>
                           <span className="block truncate text-xs text-zinc-400">{member.bio || "FOBC Adelphoi"}</span>

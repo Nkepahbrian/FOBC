@@ -4,7 +4,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
-export type NotificationKind = "amen" | "comment" | "share" | "adelphoi" | "system";
+export type NotificationKind = "amen" | "comment" | "share" | "adelphoi" | "follow" | "system";
 
 export type AppNotification = {
   id: string;
@@ -181,7 +181,66 @@ export async function markNotificationsReadRemote(userId: string) {
   }
 }
 
-const kinds = new Set<NotificationKind>(["amen", "comment", "share", "adelphoi", "system"]);
+const kinds = new Set<NotificationKind>(["amen", "comment", "share", "adelphoi", "follow", "system"]);
+
+export async function notifyFollow(targetUserId: string) {
+  if (!targetUserId || !getSupabaseEnv().isConfigured) return;
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const actorId = user?.id ?? null;
+  if (!actorId || actorId === targetUserId) return;
+
+  const message = "started following you";
+  const href = `/profile/${actorId}?from=notifications`;
+  const attempts: Record<string, string | boolean>[] = [
+    {
+      user_id: targetUserId,
+      recipient_id: targetUserId,
+      actor_id: actorId,
+      type: "follow",
+      kind: "follow",
+      message,
+      body: message,
+      href,
+      read: false,
+      is_read: false,
+    },
+    {
+      recipient_id: targetUserId,
+      actor_id: actorId,
+      kind: "follow",
+      body: message,
+      href,
+      read: false,
+      is_read: false,
+    },
+    {
+      recipient_id: targetUserId,
+      actor_id: actorId,
+      kind: "adelphoi",
+      body: message,
+      href,
+      read: false,
+      is_read: false,
+    },
+    {
+      recipient_id: targetUserId,
+      actor_id: actorId,
+      kind: "adelphoi",
+      body: message,
+      href,
+      read: false,
+    },
+  ];
+
+  for (const payload of attempts) {
+    const inserted = await supabase.from("notifications").insert(payload);
+    if (!inserted.error || missingRelation(inserted.error.message)) return;
+  }
+  console.error("Could not save follow notification.");
+}
 
 export async function notifyRecipient(input: {
   recipientId: string;
@@ -347,9 +406,9 @@ export async function syncNotifications(userId: string) {
         const actorId = String(row.follower_id);
         recordNotification({
           id: `adelphoi-in-${actorId}`,
-          kind: "adelphoi",
+          kind: "follow",
           title: names.get(actorId) || "Adelphoi",
-          body: "Joined your Adelphoi.",
+          body: "started following you",
           href: `/profile/${actorId}?from=notifications`,
           createdAt: row.created_at,
         });
