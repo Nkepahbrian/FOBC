@@ -434,8 +434,18 @@ async function writeToggle(
 
 export async function persistAmen(post: FeedPost) {
   if (!getSupabaseEnv().isConfigured) return false;
-  const saved = await writeToggle(["post_amens", "likes"], post.likedByMe, post.id);
-  if (!saved) return false;
+  if (post.likedByMe) {
+    const { supabase, userId } = await currentUserId();
+    if (!userId) return false;
+    const removed = await supabase.from("likes").delete().eq("post_id", post.id).eq("user_id", userId);
+    const removedAmen = await supabase.from("post_amens").delete().eq("post_id", post.id).eq("user_id", userId);
+    const likesFailed = Boolean(removed.error && !missingRelation(removed.error.message));
+    const amensFailed = Boolean(removedAmen.error && !missingRelation(removedAmen.error.message));
+    if (likesFailed || (Boolean(removed.error) && amensFailed)) return false;
+  } else {
+    const saved = await writeToggle(["post_amens", "likes"], post.likedByMe, post.id);
+    if (!saved) return false;
+  }
   const nextCount = Math.max(0, post.amenCount + (post.likedByMe ? -1 : 1));
   const supabase = createClient();
   await supabase.from("posts").update({ likes_count: nextCount }).eq("id", post.id);
@@ -756,10 +766,65 @@ export async function updatePostContent(post: FeedPost, content: string) {
   return error ? error.message : null;
 }
 
+function storageObject(url: string) {
+  const match = url.match(/\/storage\/v1\/object\/(?:public|sign)\/([^/]+)\/([^?]+)/);
+  if (!match) return null;
+  return { bucket: decodeURIComponent(match[1]), path: decodeURIComponent(match[2]) };
+}
+
+async function removeStoredFiles(urls: Array<string | null | undefined>) {
+  const grouped = new Map<string, string[]>();
+  for (const url of urls) {
+    if (!url) continue;
+    const object = storageObject(url);
+    if (!object) continue;
+    const paths = grouped.get(object.bucket) ?? [];
+    if (!paths.includes(object.path)) paths.push(object.path);
+    grouped.set(object.bucket, paths);
+    if (object.bucket !== "media") {
+      const mediaPaths = grouped.get("media") ?? [];
+      if (!mediaPaths.includes(object.path)) mediaPaths.push(object.path);
+      grouped.set("media", mediaPaths);
+    }
+  }
+
+  const supabase = createClient();
+  await Promise.all(
+    Array.from(grouped.entries()).map(([bucket, paths]) => (paths.length ? supabase.storage.from(bucket).remove(paths) : Promise.resolve()))
+  );
+}
+
+function urlsFromValue(value: unknown) {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
+  if (typeof value === "string" && value.includes("/storage/v1/object/")) return [value];
+  return [];
+}
+
 export async function deletePost(postId: string) {
   const supabase = createClient();
+  const existing = await supabase.from("posts").select("*").eq("id", postId).maybeSingle();
+  const row = (existing.data ?? null) as Record<string, unknown> | null;
+  if (row) {
+    await removeStoredFiles([
+      ...urlsFromValue(row.media_url),
+      ...urlsFromValue(row.image_url),
+      ...urlsFromValue(row.image_urls),
+      ...urlsFromValue(row.audio_url),
+      ...urlsFromValue(row.song_url),
+    ]);
+  }
   const { error } = await supabase.from("posts").delete().eq("id", postId);
   return error ? error.message : null;
+}
+
+export async function deleteComment(comment: FeedComment) {
+  const supabase = createClient();
+  await removeStoredFiles(urlsFromValue(comment.content));
+  const removed = await supabase.from("comments").delete().eq("id", comment.id);
+  const removedLive = await supabase.from("post_comments").delete().eq("id", comment.id);
+  if (removed.error && !missingRelation(removed.error.message) && removedLive.error) return removed.error.message;
+  if (removedLive.error && !missingRelation(removedLive.error.message) && removed.error) return removedLive.error.message;
+  return null;
 }
 
 export async function reportPost(postId: string) {

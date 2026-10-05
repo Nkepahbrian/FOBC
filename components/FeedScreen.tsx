@@ -9,6 +9,7 @@ import { LiveEventBanner } from "@/components/LiveEventBanner";
 import { PrayerWall } from "@/components/PrayerWall";
 import {
   addComment,
+  deleteComment,
   deletePost,
   loadComments,
   loadCommunity,
@@ -247,6 +248,40 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
     }));
   }
 
+  async function onDeleteComment(comment: FeedComment) {
+    setCommentsByPost((current) => ({
+      ...current,
+      [comment.postId]: (current[comment.postId] ?? []).filter((item) => item.id !== comment.id),
+    }));
+    setSnapshot((current) =>
+      current
+        ? {
+            ...current,
+            posts: current.posts.map((post) =>
+              post.id === comment.postId ? { ...post, commentCount: Math.max(0, post.commentCount - 1) } : post
+            ),
+          }
+        : current
+    );
+    const message = await deleteComment(comment);
+    if (message) {
+      setCommentsByPost((current) => ({
+        ...current,
+        [comment.postId]: [...(current[comment.postId] ?? []), comment],
+      }));
+      setSnapshot((current) =>
+        current
+          ? {
+              ...current,
+              posts: current.posts.map((post) =>
+                post.id === comment.postId ? { ...post, commentCount: post.commentCount + 1 } : post
+              ),
+            }
+          : current
+      );
+    }
+  }
+
   const isLiveActive = snapshot?.isLiveActive ?? false;
   async function onSaveEdit(postId: string, content: string) {
     const post = snapshot?.posts.find((item) => item.id === postId);
@@ -335,8 +370,10 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
       <CommentDrawer
         post={openPost}
         comments={openComments ? commentsByPost[openComments] ?? [] : []}
+        viewerId={viewerId}
         onClose={() => setOpenComments(null)}
         onComment={onComment}
+        onDelete={onDeleteComment}
       />
     </div>
   );

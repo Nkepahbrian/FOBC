@@ -96,18 +96,17 @@ export function LeaderboardScreen() {
       ) : (
         <article className="mt-6 overflow-hidden rounded-2xl bg-[#121212] ring-1 ring-[#EAB308]">
           {media?.video ? (
-            <video
-              src={`${media.url}#t=0.1`}
-              muted
-              playsInline
-              preload="metadata"
-              loop
-              onLoadedMetadata={(event) => {
-                if (event.currentTarget.currentTime < 0.1) event.currentTarget.currentTime = 0.1;
-              }}
-              className="aspect-[4/5] w-full bg-black object-cover"
-              style={{ objectFit: "cover" }}
-            />
+            <div className="aspect-[4/5] w-full bg-black">
+              <video
+                src={media.url}
+                autoPlay
+                muted
+                loop
+                playsInline
+                controls
+                className="w-full h-full object-cover"
+              />
+            </div>
           ) : media ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={media.url} alt="" loading="lazy" className="aspect-[4/5] w-full object-cover" style={{ objectFit: "cover" }} />

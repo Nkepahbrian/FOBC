@@ -8,8 +8,10 @@ import type { FeedComment, FeedPost } from "@/lib/feed/types";
 type CommentDrawerProps = {
   post: FeedPost | null;
   comments: FeedComment[];
+  viewerId?: string | null;
   onClose: () => void;
   onComment: (postId: string, content: string) => void;
+  onDelete?: (comment: FeedComment) => void;
 };
 
 function initials(name: string) {
@@ -38,7 +40,7 @@ function CommentAvatar({ comment }: { comment: FeedComment }) {
   );
 }
 
-export function CommentDrawer({ post, comments, onClose, onComment }: CommentDrawerProps) {
+export function CommentDrawer({ post, comments, viewerId, onClose, onComment, onDelete }: CommentDrawerProps) {
   const [draft, setDraft] = useState("");
 
   useEffect(() => {
@@ -90,6 +92,15 @@ export function CommentDrawer({ post, comments, onClose, onComment }: CommentDra
                   <p className="text-sm font-bold text-white">{comment.fullName}</p>
                 )}
                 <p className="mt-0.5 whitespace-pre-wrap text-sm leading-5 text-zinc-200">{comment.content}</p>
+                {onDelete && viewerId && comment.userId === viewerId ? (
+                  <button
+                    type="button"
+                    onClick={() => onDelete(comment)}
+                    className="mt-1 text-xs font-semibold text-red-400"
+                  >
+                    Delete comment
+                  </button>
+                ) : null}
               </div>
             </div>
           ))}

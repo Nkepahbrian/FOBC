@@ -7,6 +7,7 @@ import { FeedCard } from "@/components/FeedCard";
 import { CommentDrawer } from "@/components/CommentDrawer";
 import {
   addComment,
+  deleteComment,
   deletePost,
   loadComments,
   loadPost,
@@ -107,6 +108,16 @@ export function PostScreen({ postId }: { postId: string }) {
     setComments((current) => current.map((item) => (item.id === pending.id ? saved : item)));
   }
 
+  async function onDeleteComment(comment: FeedComment) {
+    setComments((current) => current.filter((item) => item.id !== comment.id));
+    setPost((current) => (current ? { ...current, commentCount: Math.max(0, current.commentCount - 1) } : current));
+    const message = await deleteComment(comment);
+    if (message) {
+      setComments((current) => [...current, comment]);
+      setPost((current) => (current ? { ...current, commentCount: current.commentCount + 1 } : current));
+    }
+  }
+
   const backLink = fromNotifications ? (
     <Link href="/notifications" className="mb-3 inline-flex px-4 pt-4 text-sm font-semibold text-[#EAB308]">
       Back
@@ -156,7 +167,14 @@ export function PostScreen({ postId }: { postId: string }) {
         onHide={() => router.push("/profile")}
         onReport={reportPost}
       />
-      <CommentDrawer post={commentsOpen ? post : null} comments={comments} onClose={() => setCommentsOpen(false)} onComment={onComment} />
+      <CommentDrawer
+        post={commentsOpen ? post : null}
+        comments={comments}
+        viewerId={viewerId}
+        onClose={() => setCommentsOpen(false)}
+        onComment={onComment}
+        onDelete={onDeleteComment}
+      />
     </div>
   );
 }
