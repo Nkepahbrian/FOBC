@@ -24,13 +24,7 @@ export function AdelphoiButton({
   if (ready && (!me || me === userId)) return null;
 
   const connected = override ?? (ready && ids.has(userId));
-  const label = connected
-    ? "Following"
-    : variant === "compact"
-      ? "Follow Adelphos"
-      : followBack
-        ? "Follow back Adelphos"
-        : "Follow Adelphoi";
+  const label = connected ? "Following" : followBack ? "Follow back Adelphos" : "Follow Adelphos";
 
   return (
     <button
@@ -46,29 +40,36 @@ export function AdelphoiButton({
         setOverride(next);
         onChange?.(next ? 1 : -1);
         setPending(true);
-        await ensureAdelphoiLoaded();
-        const viewer = getAdelphoiSnapshot();
-        if (!viewer.me || viewer.me === userId) {
-          setPending(false);
-          setOverride(null);
-          onChange?.(next ? -1 : 1);
-          const message = viewer.me ? "" : "Sign in to follow Adelphos.";
-          if (message) {
-            console.error(message);
-            setWarning(message);
+        try {
+          await ensureAdelphoiLoaded();
+          const viewer = getAdelphoiSnapshot();
+          if (!viewer.me || viewer.me === userId) {
+            setOverride(null);
+            onChange?.(next ? -1 : 1);
+            const message = viewer.me ? "" : "Sign in to follow Adelphos.";
+            if (message) {
+              console.error(message);
+              setWarning(message);
+            }
+            return;
           }
-          return;
-        }
-        const result = await toggleAdelphoi(userId, name, next);
-        setPending(false);
-        if (!result.status) {
+          const result = await toggleAdelphoi(userId, name, next);
+          if (!result.status) {
+            setOverride(connected);
+            onChange?.(next ? -1 : 1);
+            if (result.warning) setWarning(result.warning);
+            return;
+          }
+          setOverride(null);
+          setWarning("");
+        } catch (error) {
+          console.error("Follow button failed:", error);
           setOverride(connected);
           onChange?.(next ? -1 : 1);
-          if (result.warning) setWarning(result.warning);
-          return;
+          setWarning("Could not update follow. Try again.");
+        } finally {
+          setPending(false);
         }
-        setOverride(null);
-        setWarning("");
       }}
       title={warning || label}
       className={cn(

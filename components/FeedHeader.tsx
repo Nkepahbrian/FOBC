@@ -14,7 +14,7 @@ export function FeedHeader() {
   const [notesOpen, setNotesOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const notifications = useNotifications();
-  const unreadCount = notifications.filter((item) => !item.read).length;
+  const unreadCount = notifications.filter((item) => !item.is_read).length;
 
   useEffect(() => {
     if (!getSupabaseEnv().isConfigured) return;

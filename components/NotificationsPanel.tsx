@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { markNotificationsReadRemote, syncNotifications, useNotifications, type NotificationKind } from "@/lib/notifications/store";
+import { markNotificationRead, syncNotifications, useNotifications, type NotificationKind } from "@/lib/notifications/store";
+import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
@@ -27,10 +28,7 @@ export function NotificationsPanel({ active = true }: { active?: boolean }) {
     let cancelled = false;
     const supabase = createClient();
     supabase.auth.getUser().then(async ({ data }) => {
-      if (!cancelled && data.user) {
-        await syncNotifications(data.user.id);
-        await markNotificationsReadRemote(data.user.id);
-      }
+      if (!cancelled && data.user) await syncNotifications(data.user.id);
       if (!cancelled) setSettled(true);
     });
     return () => {
@@ -52,7 +50,7 @@ export function NotificationsPanel({ active = true }: { active?: boolean }) {
   }
 
   return (
-    <ul className="divide-y divide-white/10">
+    <ul className="space-y-2 px-3">
       {items.map((item) => {
         const content = (
           <>
@@ -61,14 +59,23 @@ export function NotificationsPanel({ active = true }: { active?: boolean }) {
             <p className="mt-0.5 text-sm leading-5 text-zinc-300">{item.body}</p>
           </>
         );
+        const className = cn("block rounded-2xl px-3 py-3 text-left", item.is_read ? "bg-transparent" : "bg-blue-500/15");
         return (
           <li key={item.id}>
             {item.href ? (
-              <Link href={item.href} className="block px-4 py-3 text-left">
+              <Link
+                href={item.href}
+                className={className}
+                onClick={() => {
+                  void markNotificationRead(item.id);
+                }}
+              >
                 {content}
               </Link>
             ) : (
-              <div className="px-4 py-3">{content}</div>
+              <button type="button" onClick={() => void markNotificationRead(item.id)} className={cn(className, "w-full")}>
+                {content}
+              </button>
             )}
           </li>
         );

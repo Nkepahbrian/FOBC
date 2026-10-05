@@ -425,12 +425,17 @@ export function CreatePostModal() {
         ) : (
           <textarea
             value={content}
-            onChange={(event) => setContent(event.target.value)}
-            rows={4}
+            onChange={(event) => {
+              setContent(event.target.value);
+              const field = event.currentTarget;
+              field.style.height = "180px";
+              field.style.height = `${Math.max(180, field.scrollHeight)}px`;
+            }}
+            rows={6}
             maxLength={2000}
             aria-label="Post"
             placeholder="Add a message"
-            className="mt-4 w-full resize-none rounded-3xl border border-white/10 bg-black px-4 py-4 text-sm leading-6 text-white outline-none ring-[#EAB308] focus:ring-2"
+            className="mt-4 min-h-[180px] w-full resize-y rounded-3xl border border-white/10 bg-black px-4 py-4 text-sm leading-6 text-white outline-none ring-[#EAB308] focus:ring-2"
           />
         )}
 

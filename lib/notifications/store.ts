@@ -13,6 +13,7 @@ export type AppNotification = {
   body: string;
   href?: string;
   createdAt: string;
+  is_read: boolean;
   read: boolean;
 };
 
@@ -23,8 +24,14 @@ type NotificationDraft = {
   body: string;
   href?: string;
   createdAt?: string;
+  is_read?: boolean;
   read?: boolean;
 };
+
+function asRead(item: { is_read?: boolean; read?: boolean }) {
+  if (typeof item.is_read === "boolean") return item.is_read;
+  return Boolean(item.read);
+}
 
 const STORAGE_KEY = "fobc-notifications";
 const EMPTY: AppNotification[] = [];
@@ -40,7 +47,12 @@ function readStorage() {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     const parsed = raw ? (JSON.parse(raw) as AppNotification[]) : [];
-    items = Array.isArray(parsed) ? parsed.slice(0, 50) : EMPTY;
+    items = Array.isArray(parsed)
+      ? parsed.slice(0, 50).map((item) => {
+          const is_read = asRead(item);
+          return { ...item, is_read, read: is_read };
+        })
+      : EMPTY;
   } catch {
     items = EMPTY;
   }
@@ -97,8 +109,16 @@ export function useNotifications() {
 export function recordNotification(input: NotificationDraft) {
   readStorage();
   const existing = items.find((item) => item.id === input.id);
-  if (existing && existing.title === input.title && existing.body === input.body) return;
+  const incomingRead = asRead(input);
+  if (existing && existing.title === input.title && existing.body === input.body) {
+    if (incomingRead && !existing.is_read) {
+      items = items.map((item) => (item.id === input.id ? { ...item, is_read: true, read: true } : item));
+      writeStorage();
+    }
+    return;
+  }
 
+  const is_read = existing?.is_read ? true : incomingRead;
   const next: AppNotification = {
     id: input.id,
     kind: input.kind,
@@ -106,7 +126,8 @@ export function recordNotification(input: NotificationDraft) {
     body: input.body,
     href: input.href,
     createdAt: existing?.createdAt ?? input.createdAt ?? new Date().toISOString(),
-    read: existing?.read ?? input.read ?? false,
+    is_read,
+    read: is_read,
   };
   items = [next, ...items.filter((item) => item.id !== input.id)].slice(0, 50);
   writeStorage();
@@ -114,16 +135,44 @@ export function recordNotification(input: NotificationDraft) {
 
 export function markNotificationsRead() {
   readStorage();
-  if (items.length === 0 || items.every((item) => item.read)) return;
-  items = items.map((item) => (item.read ? item : { ...item, read: true }));
+  if (items.length === 0 || items.every((item) => item.is_read)) return;
+  items = items.map((item) => (item.is_read ? item : { ...item, is_read: true, read: true }));
   writeStorage();
+}
+
+export async function markNotificationRead(id: string) {
+  readStorage();
+  const current = items.find((item) => item.id === id);
+  if (!current || current.is_read) return;
+  items = items.map((item) => (item.id === id ? { ...item, is_read: true, read: true } : item));
+  writeStorage();
+
+  const remoteId = id.startsWith("db-") ? id.slice(3) : "";
+  if (!remoteId || !getSupabaseEnv().isConfigured) return;
+  const supabase = createClient();
+  const updated = await supabase.from("notifications").update({ is_read: true, read: true }).eq("id", remoteId);
+  if (!updated.error) return;
+  if (/is_read/i.test(updated.error.message)) {
+    const legacy = await supabase.from("notifications").update({ read: true }).eq("id", remoteId);
+    if (legacy.error) console.error("Could not mark notification read:", legacy.error);
+    return;
+  }
+  if (/read/i.test(updated.error.message)) {
+    const flagged = await supabase.from("notifications").update({ is_read: true }).eq("id", remoteId);
+    if (flagged.error) console.error("Could not mark notification read:", flagged.error);
+    return;
+  }
+  console.error("Could not mark notification read:", updated.error);
 }
 
 export async function markNotificationsReadRemote(userId: string) {
   markNotificationsRead();
   if (!userId || !getSupabaseEnv().isConfigured) return;
   const supabase = createClient();
-  await supabase.from("notifications").update({ read: true }).eq("recipient_id", userId).eq("read", false);
+  const updated = await supabase.from("notifications").update({ read: true, is_read: true }).eq("recipient_id", userId).eq("is_read", false);
+  if (updated.error && /is_read/i.test(updated.error.message)) {
+    await supabase.from("notifications").update({ read: true }).eq("recipient_id", userId).eq("read", false);
+  }
 }
 
 const kinds = new Set<NotificationKind>(["amen", "comment", "share", "adelphoi", "system"]);
@@ -142,15 +191,28 @@ export async function notifyRecipient(input: {
   const actorId = user?.id ?? null;
   if (!actorId || actorId === input.recipientId) return;
 
-  const inserted = await supabase.from("notifications").insert({
+  let inserted = await supabase.from("notifications").insert({
     recipient_id: input.recipientId,
     actor_id: actorId,
     kind: input.kind,
     body: input.body,
     href: input.href,
+    read: false,
+    is_read: false,
   });
+  if (inserted.error && /is_read/i.test(inserted.error.message)) {
+    inserted = await supabase.from("notifications").insert({
+      recipient_id: input.recipientId,
+      actor_id: actorId,
+      kind: input.kind,
+      body: input.body,
+      href: input.href,
+      read: false,
+    });
+  }
 
   if (!inserted.error || missingRelation(inserted.error.message)) return;
+  console.error("Could not save notification:", inserted.error);
 }
 
 function missingRelation(message: string) {
@@ -170,12 +232,21 @@ export async function syncNotifications(userId: string) {
 
   try {
     const supabase = createClient();
-    const stored = await supabase
+    const withFlag = await supabase
       .from("notifications")
-      .select("id, actor_id, kind, body, href, created_at, read")
+      .select("id, actor_id, kind, body, href, created_at, read, is_read")
       .eq("recipient_id", userId)
       .order("created_at", { ascending: false })
       .limit(40);
+    const stored =
+      withFlag.error && /is_read/i.test(withFlag.error.message)
+        ? await supabase
+            .from("notifications")
+            .select("id, actor_id, kind, body, href, created_at, read")
+            .eq("recipient_id", userId)
+            .order("created_at", { ascending: false })
+            .limit(40)
+        : withFlag;
 
     if (!stored.error) {
       const names = await namesFor((stored.data ?? []).map((row) => String(row.actor_id || "")));
@@ -188,7 +259,7 @@ export async function syncNotifications(userId: string) {
           body: String(row.body || ""),
           href: row.href || undefined,
           createdAt: row.created_at,
-          read: Boolean(row.read),
+          is_read: asRead(row as { is_read?: boolean; read?: boolean }),
         });
       }
       return;

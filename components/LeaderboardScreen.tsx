@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Heart } from "lucide-react";
+import { PostCaption } from "@/components/PostCaption";
 import { readStale, writeCache } from "@/lib/cache/swr";
 import { loadLeaderboard, optimisticAmen, persistAmen } from "@/lib/feed/api";
 import type { FeedPost } from "@/lib/feed/types";
@@ -120,7 +121,7 @@ export function LeaderboardScreen() {
                 {winner.songArtist || "FOBC"} • {winner.songTitle}
               </p>
             ) : null}
-            {winner.content ? <p className="mt-2 line-clamp-3 text-sm leading-5 text-zinc-200">{winner.content}</p> : null}
+            {winner.content ? <PostCaption text={winner.content} className="mt-2 text-sm leading-5 text-zinc-200" /> : null}
             <button
               type="button"
               onClick={() => onAmen(winner)}

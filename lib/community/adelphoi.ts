@@ -76,7 +76,7 @@ function permissionBlocked(error: { message: string; code?: string }) {
   return /row-level security|permission denied|42501|policy/i.test(`${error.code ?? ""} ${error.message}`);
 }
 
-function logFollowError(action: "insert" | "delete", error: { message: string; code?: string }) {
+function logFollowError(action: "upsert" | "delete", error: { message: string; code?: string }) {
   if (permissionBlocked(error)) {
     console.error(
       `Follow ${action} was blocked by Supabase row-level security on the follows table. follower_id must equal the signed-in user.`,
@@ -93,43 +93,61 @@ export async function toggleAdelphoi(
   targetName: string,
   follow?: boolean
 ): Promise<{ status: "followed" | "unfollowed" | null; warning: string | null }> {
-  await ensureAdelphoiLoaded();
-  const { me, ids } = snapshot;
-  if (!me || me === targetId || !getSupabaseEnv().isConfigured) {
-    return { status: null, warning: me ? null : "Sign in to follow Adelphos." };
-  }
-
-  const supabase = createClient();
-  const shouldFollow = follow ?? !ids.has(targetId);
-  const next = new Set(ids);
-
-  if (!shouldFollow) {
-    next.delete(targetId);
-    publish({ me, ids: next, ready: true });
-    const { error } = await supabase.from("follows").delete().eq("follower_id", me).eq("following_id", targetId);
-    if (error) {
-      publish({ me, ids, ready: true });
-      return { status: null, warning: logFollowError("delete", error) };
+  let restore: AdelphoiSnapshot | null = null;
+  try {
+    await ensureAdelphoiLoaded();
+    const { me, ids } = snapshot;
+    if (!me || me === targetId || !getSupabaseEnv().isConfigured) {
+      return { status: null, warning: me ? null : "Sign in to follow Adelphos." };
     }
-    return { status: "unfollowed", warning: null };
-  }
 
-  next.add(targetId);
-  publish({ me, ids: next, ready: true });
-  const { error } = await supabase.from("follows").insert({ follower_id: me, following_id: targetId });
-  if (error && /duplicate key|unique constraint|23505/i.test(error.message)) {
+    const supabase = createClient();
+    const shouldFollow = follow ?? !ids.has(targetId);
+    const previous = new Set(ids);
+    const next = new Set(ids);
+    restore = { me, ids: previous, ready: true };
+
+    if (!shouldFollow) {
+      next.delete(targetId);
+      publish({ me, ids: next, ready: true });
+      const { error } = await supabase.from("follows").delete().eq("follower_id", me).eq("following_id", targetId);
+      if (error) {
+        publish(restore);
+        return { status: null, warning: logFollowError("delete", error) };
+      }
+      return { status: "unfollowed", warning: null };
+    }
+
+    next.add(targetId);
+    publish({ me, ids: next, ready: true });
+    let { error } = await supabase.from("follows").upsert(
+      { follower_id: me, following_id: targetId },
+      { onConflict: "follower_id,following_id", ignoreDuplicates: true }
+    );
+    if (error && /on conflict|42P10|no unique/i.test(error.message)) {
+      const inserted = await supabase.from("follows").insert({ follower_id: me, following_id: targetId });
+      error = inserted.error && /duplicate key|unique constraint|23505/i.test(inserted.error.message) ? null : inserted.error;
+    }
+    if (error && /duplicate key|unique constraint|23505/i.test(error.message)) error = null;
+    if (error) {
+      publish(restore);
+      return { status: null, warning: logFollowError("upsert", error) };
+    }
+
+    try {
+      await notifyRecipient({
+        recipientId: targetId,
+        kind: "adelphoi",
+        body: `${targetName.trim() || "Someone"} started following you.`,
+        href: `/profile/${me}?from=notifications`,
+      });
+    } catch (notifyError) {
+      console.error("Follow saved, but the notification could not be sent:", notifyError);
+    }
     return { status: "followed", warning: null };
+  } catch (error) {
+    console.error("Follow action failed:", error);
+    if (restore) publish(restore);
+    return { status: null, warning: "Could not update follow. Try again." };
   }
-  if (error) {
-    publish({ me, ids, ready: true });
-    return { status: null, warning: logFollowError("insert", error) };
-  }
-
-  await notifyRecipient({
-    recipientId: targetId,
-    kind: "adelphoi",
-    body: `${targetName.trim() || "Someone"} started following you.`,
-    href: `/profile/${me}?from=notifications`,
-  });
-  return { status: "followed", warning: null };
 }

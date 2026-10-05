@@ -7,7 +7,8 @@ import { AdelphoiButton } from "@/components/AdelphoiButton";
 import { MediaCarousel, type CarouselSlide } from "@/components/MediaCarousel";
 import { MediaLightbox } from "@/components/MediaLightbox";
 import { ThoughtCard } from "@/components/ThoughtCard";
-import { isSoundOn, setSoundOn } from "@/lib/audio/sound";
+import { isSoundOn, playAttachedAudio, setSoundOn, unlockAudioContext } from "@/lib/audio/sound";
+import { PostCaption } from "@/components/PostCaption";
 import type { FeedPost } from "@/lib/feed/types";
 import { categoryLabel, formatTimestamp } from "@/lib/feed/types";
 import { notifyRecipient } from "@/lib/notifications/store";
@@ -116,32 +117,35 @@ export function FeedCard({
 
   const applyPlayback = useCallback((visible: boolean, unlocked: boolean) => {
     const node = cardRef.current;
+    const playVideoAudio = unlocked && !audioSrc;
     node?.querySelectorAll<HTMLVideoElement>("video[data-inline]").forEach((video) => {
-      video.muted = Boolean(audioSrc) || !unlocked;
-      if (visible && lightbox === null) video.play().catch(() => undefined);
-      else video.pause();
+      video.muted = !playVideoAudio;
+      if (visible && lightbox === null) {
+        if (playVideoAudio) unlockAudioContext();
+        video.play().catch((error) => {
+          if (playVideoAudio) console.error("Could not play video audio:", error);
+        });
+      } else {
+        video.pause();
+      }
     });
     const audio = audioRef.current;
-    if (!audio) return;
+    if (!audio || !audioSrc) return;
     if (visible && unlocked) {
-      const start = post.songSnippetStart || 0;
       window.dispatchEvent(new CustomEvent("fobc-audio", { detail: post.id }));
-      if (audio.currentTime < start || (post.songSnippetLength > 0 && audio.currentTime >= start + post.songSnippetLength)) {
-        audio.currentTime = start;
-      }
-      audio.muted = false;
-      audio.play().catch(() => undefined);
+      playAttachedAudio(audio, audioSrc, post.songSnippetStart || 0);
     } else {
       audio.pause();
       audio.muted = true;
     }
-  }, [audioSrc, lightbox, post.id, post.songSnippetLength, post.songSnippetStart]);
+  }, [audioSrc, lightbox, post.id, post.songSnippetStart]);
 
   function toggleSound() {
     const next = !isSoundOn();
+    unlockAudioContext();
     setSoundOn(next);
     setSound(next);
-    applyPlayback(visibleRef.current, next);
+    applyPlayback(visibleRef.current || true, next);
   }
 
   useEffect(() => {
@@ -350,7 +354,7 @@ export function FeedCard({
             </div>
           </form>
         ) : post.content && !post.thoughtStyle ? (
-          <p className="mt-3 whitespace-pre-wrap text-[15px] leading-6 text-white">{post.content}</p>
+          <PostCaption text={post.content} className="mt-3 text-[15px] leading-6 text-white" />
         ) : null}
         {reported ? <p className="mt-2 text-xs text-[#EAB308]">Thanks. This post was reported.</p> : null}
         {actionError ? <p className="mt-2 text-xs text-red-300">{actionError}</p> : null}
@@ -359,16 +363,15 @@ export function FeedCard({
         {audioSrc ? (
           <audio
             ref={audioRef}
-            src={audioSrc}
             loop
-            preload="none"
-            muted
+            preload="auto"
+            playsInline
             onEnded={() => {
               const audio = audioRef.current;
               if (!audio || !isSoundOn()) return;
               audio.currentTime = post.songSnippetStart || 0;
               audio.muted = false;
-              audio.play().catch(() => undefined);
+              audio.play().catch((error) => console.error("Could not replay attached audio:", error));
             }}
             onTimeUpdate={() => {
               const audio = audioRef.current;
@@ -376,7 +379,7 @@ export function FeedCard({
               const start = post.songSnippetStart || 0;
               if (audio.currentTime >= start + post.songSnippetLength) audio.currentTime = start;
             }}
-            className="hidden"
+            className="sr-only"
           />
         ) : null}
 
