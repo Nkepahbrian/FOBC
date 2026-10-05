@@ -6,11 +6,13 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { AuthShell } from "@/components/AuthShell";
 import { destinationForUser } from "@/lib/auth/destination";
-import { getSiteUrl } from "@/lib/site";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
 const AUTH_EMAIL_KEY = "fobc-auth-email";
+const AUTH_NAME_KEY = "fobc-auth-name";
+const AUTH_PHONE_KEY = "fobc-auth-phone";
+const AUTH_PASSWORD_KEY = "fobc-auth-password";
 const CODE_LENGTH = 6;
 
 export default function VerifyOtpPage() {
@@ -105,7 +107,7 @@ export default function VerifyOtpPage() {
     const { data, error: verifyError } = await supabase.auth.verifyOtp({
       email,
       token,
-      type: "signup",
+      type: "email",
     });
 
     if (verifyError || !data.user) {
@@ -114,13 +116,32 @@ export default function VerifyOtpPage() {
       return;
     }
 
+    const pendingName = sessionStorage.getItem(AUTH_NAME_KEY)?.trim() ?? "";
+    const pendingPhone = sessionStorage.getItem(AUTH_PHONE_KEY)?.trim() ?? "";
+    const pendingPassword = sessionStorage.getItem(AUTH_PASSWORD_KEY) ?? "";
+    let user = data.user;
+
+    if (pendingName || pendingPhone || pendingPassword) {
+      const { data: updated } = await supabase.auth.updateUser({
+        ...(pendingPassword ? { password: pendingPassword } : {}),
+        data: {
+          ...(pendingName ? { full_name: pendingName } : {}),
+          ...(pendingPhone ? { phone_number: pendingPhone } : {}),
+        },
+      });
+      if (updated.user) user = updated.user;
+    }
+
     try {
-      await destinationForUser(supabase, data.user, "signup");
+      await destinationForUser(supabase, user, "signup");
     } catch {
       /* profile details can be finished from the feed */
     }
 
     sessionStorage.removeItem(AUTH_EMAIL_KEY);
+    sessionStorage.removeItem(AUTH_NAME_KEY);
+    sessionStorage.removeItem(AUTH_PHONE_KEY);
+    sessionStorage.removeItem(AUTH_PASSWORD_KEY);
     router.replace("/feed");
     router.refresh();
   }
@@ -130,10 +151,8 @@ export default function VerifyOtpPage() {
     setResending(true);
     setError("");
     const supabase = createClient();
-    const { error: resendError } = await supabase.auth.resend({
-      type: "signup",
+    const { error: resendError } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${getSiteUrl()}/auth/callback?next=/feed` },
     });
     setResending(false);
     if (resendError) {

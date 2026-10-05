@@ -6,12 +6,14 @@ import { motion } from "framer-motion";
 import { Eye, EyeOff } from "lucide-react";
 import { AuthShell } from "@/components/AuthShell";
 import { destinationForUser } from "@/lib/auth/destination";
-import { getSiteUrl } from "@/lib/site";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
 const AUTH_EMAIL_KEY = "fobc-auth-email";
 const AUTH_INTENT_KEY = "fobc-auth-intent";
+const AUTH_NAME_KEY = "fobc-auth-name";
+const AUTH_PHONE_KEY = "fobc-auth-phone";
+const AUTH_PASSWORD_KEY = "fobc-auth-password";
 
 const fieldClass =
   "mt-2 w-full rounded-2xl border border-white/10 bg-black px-4 py-3.5 text-white outline-none ring-[#EAB308] transition placeholder:text-zinc-500 focus:border-[#EAB308] focus:ring-2";
@@ -85,27 +87,23 @@ export default function LoginPage() {
         return;
       }
 
-      const { error: signUpError } = await supabase.auth.signUp({
+      const { error: otpError } = await supabase.auth.signInWithOtp({
         email: cleanEmail,
-        password,
-        options: {
-          emailRedirectTo: `${getSiteUrl()}/auth/callback?next=/feed`,
-          data: {
-            full_name: name,
-            ...(phoneNumber ? { phone_number: phoneNumber } : {}),
-          },
-        },
       });
 
       setPending(false);
 
-      if (signUpError) {
-        setError(signUpError.message);
+      if (otpError) {
+        setError(otpError.message);
         return;
       }
 
       sessionStorage.setItem(AUTH_EMAIL_KEY, cleanEmail);
       sessionStorage.setItem(AUTH_INTENT_KEY, "signup");
+      sessionStorage.setItem(AUTH_NAME_KEY, name);
+      sessionStorage.setItem(AUTH_PASSWORD_KEY, password);
+      if (phoneNumber) sessionStorage.setItem(AUTH_PHONE_KEY, phoneNumber);
+      else sessionStorage.removeItem(AUTH_PHONE_KEY);
       router.push(`/verify-otp?email=${encodeURIComponent(cleanEmail)}`);
       return;
     }
@@ -133,7 +131,7 @@ export default function LoginPage() {
       title={mode === "signup" ? "Create account" : "Welcome back"}
       subtitle={
         mode === "signup"
-          ? "Join the Festival of Blessings Community with your email."
+          ? "Join with your email. We’ll send a 6-digit code to confirm it."
           : "Sign in with the email and password for your account."
       }
     >
