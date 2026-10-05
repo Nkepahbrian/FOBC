@@ -174,9 +174,15 @@ export function ChatScreen() {
         const inThread =
           active &&
           ((row.sender_id === me && row.receiver_id === active.id) || (row.sender_id === active.id && row.receiver_id === me));
-        if (inThread && row.sender_id !== me) {
-          setMessages((current) => (current.some((message) => message.id === row.id) ? current : [...current, row]));
-          markConversationRead(me, active.id).catch(() => undefined);
+        if (inThread) {
+          setMessages((current) => {
+            if (current.some((message) => message.id === row.id)) return current;
+            const withoutLocal = current.filter(
+              (message) => !(message.id.startsWith("local-") && message.sender_id === row.sender_id && message.content === row.content)
+            );
+            return [...withoutLocal, row];
+          });
+          if (row.sender_id !== me) markConversationRead(me, active.id).catch(() => undefined);
         }
         loadThreads(me);
       })
@@ -331,7 +337,7 @@ export function ChatScreen() {
   if (active) {
     const name = displayName(active);
     return (
-      <section className="flex h-[100dvh] max-h-[100dvh] flex-col overflow-x-hidden px-4 pt-4 text-white">
+      <section className="fobc-safe-clear flex h-[100dvh] max-h-[100dvh] flex-col overflow-x-hidden px-4 text-white">
         <div className="flex items-center gap-3">
           <button type="button" onClick={closeConversation} className="text-sm font-semibold text-[#EAB308]">
             Back
@@ -408,7 +414,7 @@ export function ChatScreen() {
 
   return (
     <section className="overflow-x-hidden text-white">
-      <div className="px-4 pt-4">
+      <div className="fobc-safe-clear px-4">
         <h1 className="text-2xl font-semibold tracking-tight">Messages</h1>
         <label className="mt-3 flex h-10 items-center gap-2 rounded-xl bg-[#121212] px-3">
           <Search className="h-4 w-4 text-zinc-500" />
@@ -548,11 +554,19 @@ export function ChatScreen() {
 }
 
 function Avatar({ person, size = "md" }: { person: Person; size?: "sm" | "md" }) {
+  const [broken, setBroken] = useState(false);
   const name = displayName(person);
   const box = size === "sm" ? "h-8 w-8 text-xs" : "h-12 w-12 text-sm";
-  if (person.avatar_url) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={person.avatar_url} alt="" className={`${box} shrink-0 rounded-full object-cover`} />;
+  if (person.avatar_url && !broken) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={person.avatar_url}
+        alt=""
+        onError={() => setBroken(true)}
+        className={`${box} shrink-0 rounded-full object-cover`}
+      />
+    );
   }
   return (
     <span className={`flex ${box} shrink-0 items-center justify-center rounded-full bg-[#121212] font-semibold text-[#EAB308]`}>

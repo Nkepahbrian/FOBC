@@ -371,8 +371,8 @@ export function CreatePostModal() {
   }
 
   return (
-    <div className="fixed inset-0 z-30 mx-auto flex h-dvh w-full max-w-lg flex-col bg-black/70">
-      <form onSubmit={onSubmit} className="mt-6 flex min-h-0 flex-1 flex-col overflow-y-auto rounded-t-[2rem] bg-[#121212] px-5 pb-28 pt-4 text-white shadow-2xl">
+    <div className="fobc-safe-top fixed inset-0 z-30 mx-auto flex h-dvh w-full max-w-lg flex-col bg-black/70">
+      <form onSubmit={onSubmit} className="mt-3 flex min-h-0 flex-1 flex-col overflow-y-auto rounded-t-[2rem] bg-[#121212] px-5 pb-28 pt-4 text-white shadow-2xl">
         <div className="grid grid-cols-[2.5rem_1fr_2.5rem] items-center">
           <span />
           <h1 className="text-center text-base font-semibold">New post</h1>

@@ -24,6 +24,14 @@ body {
   text-size-adjust: 100%;
 }
 
+.fobc-safe-top {
+  padding-top: env(safe-area-inset-top, 20px);
+}
+
+.fobc-safe-clear {
+  padding-top: calc(env(safe-area-inset-top, 20px) + 12px);
+}
+
 .fobc-wordmark {
   font-family: "Segoe Script", "Brush Script MT", "Snell Roundhand", cursive;
   font-weight: 400;

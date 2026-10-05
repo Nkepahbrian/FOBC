@@ -34,8 +34,17 @@ export function useUnreadMessages() {
       })
       .subscribe();
 
+    function onFocus() {
+      if (document.visibilityState === "hidden" || !userId) return;
+      refresh(userId);
+    }
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
       supabase.removeChannel(channel);
     };
   }, []);

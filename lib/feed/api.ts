@@ -641,13 +641,14 @@ export async function loadComments(postId: string): Promise<FeedComment[]> {
       }
       const byId = new Map((profiles.data ?? []).map((profile) => [profile.id, profile]));
       const likeRows = likes.error ? [] : (likes.data ?? []);
+      const storedCounts = await commentLikeCounts(supabase, commentIds);
       return rows.map((row) => {
         const profile = byId.get(row.user_id);
         const reply = readReply(row.content, "parent_id" in row ? (row.parent_id as string | null) : null);
         const amenRows = likeRows.filter((like) => like.comment_id === row.id);
         const serverCount = likes.error ? 0 : amenRows.length;
         const serverLiked = !likes.error && Boolean(user && amenRows.some((like) => like.user_id === user.id));
-        const merged = mergedCommentLike(row.id, serverCount, serverLiked);
+        const merged = mergedCommentLike(row.id, serverCount, serverLiked, storedCounts.get(row.id) ?? 0);
         return {
           id: row.id,
           postId: row.post_id,
@@ -669,12 +670,38 @@ export async function loadComments(postId: string): Promise<FeedComment[]> {
   }
 }
 
+async function commentLikeCounts(supabase: ReturnType<typeof createClient>, commentIds: string[]) {
+  const counts = new Map<string, number>();
+  if (commentIds.length === 0) return counts;
+  for (const table of ["comments", "post_comments"]) {
+    const withLikes = await supabase.from(table).select("id, likes_count").in("id", commentIds);
+    const result =
+      withLikes.error && /likes_count/i.test(withLikes.error.message)
+        ? await supabase.from(table).select("id, like_count").in("id", commentIds)
+        : withLikes;
+    if (result.error) {
+      if (missingRelation(result.error.message) || /like_count|likes_count/i.test(result.error.message)) continue;
+      console.error(`Could not read ${table} like counts:`, result.error);
+      continue;
+    }
+    for (const row of result.data ?? []) {
+      const value = Number((row as { likes_count?: number; like_count?: number }).likes_count ?? (row as { like_count?: number }).like_count ?? 0);
+      if (Number.isFinite(value)) counts.set(String(row.id), value);
+    }
+    if ((result.data ?? []).length > 0) break;
+  }
+  return counts;
+}
+
 async function writeCommentLikeCount(supabase: ReturnType<typeof createClient>, commentId: string, count: number) {
   for (const table of ["comments", "post_comments"]) {
-    const updated = await supabase.from(table).update({ like_count: count }).eq("id", commentId);
+    let updated = await supabase.from(table).update({ likes_count: count }).eq("id", commentId);
+    if (updated.error && /likes_count/i.test(updated.error.message)) {
+      updated = await supabase.from(table).update({ like_count: count }).eq("id", commentId);
+    }
     if (!updated.error) return;
-    if (missingRelation(updated.error.message) || /like_count/i.test(updated.error.message)) continue;
-    console.error(`Could not update ${table}.like_count:`, updated.error);
+    if (missingRelation(updated.error.message) || /like_count|likes_count/i.test(updated.error.message)) continue;
+    console.error(`Could not update ${table}.likes_count:`, updated.error);
     return;
   }
 }

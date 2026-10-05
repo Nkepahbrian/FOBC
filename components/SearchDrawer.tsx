@@ -124,7 +124,7 @@ export function SearchDrawer({ onClose }: { onClose: () => void }) {
         role="dialog"
         aria-modal="true"
         aria-label="Search"
-        className="flex max-h-[88dvh] w-full max-w-lg flex-col rounded-b-[2rem] bg-[#0F172A] px-4 pb-6 pt-4 text-white shadow-2xl"
+        className="fobc-safe-clear flex max-h-[88dvh] w-full max-w-lg flex-col rounded-b-[2rem] bg-[#0F172A] px-4 pb-6 text-white shadow-2xl"
       >
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Search</h2>

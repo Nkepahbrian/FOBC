@@ -34,7 +34,7 @@ export function MediaLightbox({
         type="button"
         onClick={onClose}
         aria-label="Close"
-        className="absolute right-4 top-[max(1rem,env(safe-area-inset-top))] z-10 flex h-10 items-center gap-1.5 rounded-full bg-black/60 px-3 text-sm font-semibold text-white"
+        className="absolute right-4 top-[calc(env(safe-area-inset-top,20px)+12px)] z-10 flex h-10 items-center gap-1.5 rounded-full bg-black/60 px-3 text-sm font-semibold text-white"
       >
         Close
         <X className="h-4 w-4" />

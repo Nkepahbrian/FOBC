@@ -33,6 +33,7 @@ type ProfileModel = {
   posts: number;
   amens: number;
   followers: number;
+  viewerFollows: boolean;
   grid: ProfilePost[];
 };
 
@@ -217,7 +218,7 @@ function withThoughts(model: ProfileModel): ProfileModel {
 }
 
 function adelphoiLabel(count: number) {
-  return count === 1 ? "Adelphos" : "Adelphoi";
+  return count === 1 ? "1 Adelphos" : `${count} Adelphoi`;
 }
 
 export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolean }) {
@@ -239,7 +240,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
     const [profileResult, postsResult, followResult] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
       supabase.from("posts").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(20),
-      supabase.from("follows").select("id", { count: "exact", head: true }).eq("following_id", userId),
+      supabase.from("follows").select("*", { count: "exact" }).eq("following_id", userId),
     ]);
     const row = (profileResult.data ?? {}) as Record<string, string | null>;
     const name = row.full_name || (isOwn ? "Your profile" : "Community member");
@@ -253,7 +254,12 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
       ]);
       amens = !amenResult.error ? amenResult.data?.length ?? 0 : !likeResult.error ? likeResult.data?.length ?? 0 : 0;
     }
-    const followers = followResult.error ? 0 : followResult.count ?? 0;
+    const followRows = (followResult.data ?? []) as { follower_id?: string }[];
+    const {
+      data: { user: viewer },
+    } = await supabase.auth.getUser();
+    const viewerFollows = Boolean(viewer && followRows.some((row) => String(row.follower_id) === viewer.id));
+    const followers = followResult.error ? followRows.length : followResult.count ?? followRows.length;
 
     if (cancelled()) return;
     const model: ProfileModel = {
@@ -266,6 +272,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
         posts: posts.length,
         amens,
         followers,
+        viewerFollows,
         grid: posts.map((post) => {
           const packed = readPackedAudio(String(post.content || post.caption || ""));
           const thought = readPackedThought(packed.content);
@@ -384,7 +391,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
 
   if (!profile) {
     return (
-      <section className="px-4 pt-4 text-white">
+      <section className="fobc-safe-clear px-4 text-white">
         <ProfileTopBar showSettings={viewingSelf} />
         <div className="mt-4 animate-pulse">
           <div className="h-8 w-28 rounded bg-white/10" />
@@ -407,8 +414,14 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
     );
   }
 
+  const viewerFollows = adelphoi.ready && adelphoi.me ? adelphoi.ids.has(profile.id) : Boolean(profile.viewerFollows);
+  const followerCount = Math.max(
+    0,
+    profile.followers + (viewerFollows === Boolean(profile.viewerFollows) ? 0 : viewerFollows ? 1 : -1)
+  );
+
   return (
-    <section className="px-4 pt-4 text-white">
+    <section className="fobc-safe-clear px-4 text-white">
       {fromNotifications ? (
         <Link href="/notifications" className="mb-3 inline-flex text-sm font-semibold text-[#EAB308]">
           Back
@@ -454,8 +467,8 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
             <dd className="text-xs text-zinc-400">Amens</dd>
           </div>
           <div>
-            <dt className="text-lg font-semibold">{profile.followers}</dt>
-            <dd className="text-xs text-zinc-400">{adelphoiLabel(profile.followers)}</dd>
+            <dt className="text-sm font-semibold leading-5">{adelphoiLabel(followerCount)}</dt>
+            <dd className="sr-only">Adelphoi</dd>
           </div>
         </dl>
       </div>
@@ -510,11 +523,6 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
             name={profile.fullName}
             variant="prominent"
             followBack={fromNotifications}
-            onChange={(delta) => {
-              setProfile((current) =>
-                current ? { ...current, followers: Math.max(0, current.followers + delta) } : current
-              );
-            }}
           />
         </div>
       ) : null}

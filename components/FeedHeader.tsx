@@ -26,7 +26,7 @@ export function FeedHeader() {
 
   return (
     <>
-    <header className="sticky top-0 z-30 border-b border-white/10 bg-black/90 pt-[env(safe-area-inset-top)] backdrop-blur">
+    <header className="fobc-safe-clear sticky top-0 z-30 border-b border-white/10 bg-black/90 backdrop-blur">
       <div className="flex h-14 items-center justify-between gap-3 px-4">
         <Link href="/feed" aria-label="FOBC home" className="flex min-w-0 items-center gap-2">
           <Wordmark className="text-[2rem]" />
@@ -73,7 +73,7 @@ export function FeedHeader() {
             aria-label="Notifications"
             className="flex max-h-[88dvh] w-full max-w-lg flex-col rounded-b-[2rem] bg-[#0F172A] text-white shadow-2xl"
           >
-            <div className="flex items-center justify-between px-4 pt-4">
+            <div className="fobc-safe-clear flex items-center justify-between px-4">
               <h2 className="text-lg font-semibold">Notifications</h2>
               <button
                 type="button"
