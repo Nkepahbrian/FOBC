@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Camera } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Camera, MoreHorizontal } from "lucide-react";
 import { AdelphoiButton } from "@/components/AdelphoiButton";
 import { Wordmark } from "@/components/Logo";
 import { readStale, writeCache } from "@/lib/cache/swr";
@@ -123,6 +124,81 @@ function ProfileTile({ post }: { post: ProfilePost }) {
         </span>
       )}
     </Link>
+  );
+}
+
+function ProfileSettingsMenu() {
+  const router = useRouter();
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointer(event: PointerEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("pointerdown", onPointer);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerdown", onPointer);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  async function logOut() {
+    setOpen(false);
+    try {
+      await createClient().auth.signOut();
+    } catch {
+      /* still leave the signed-in screens */
+    }
+    try {
+      window.localStorage.clear();
+      window.sessionStorage.clear();
+    } catch {
+      /* storage can be blocked */
+    }
+    router.replace("/login");
+    router.refresh();
+  }
+
+  return (
+    <div ref={menuRef} className="relative">
+      <button
+        type="button"
+        aria-label="Profile settings"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((current) => !current)}
+        className="flex h-10 w-10 items-center justify-center rounded-full text-white hover:bg-white/10"
+      >
+        <MoreHorizontal className="h-5 w-5" />
+      </button>
+      {open ? (
+        <div role="menu" className="absolute right-0 top-11 z-30 w-44 overflow-hidden rounded-2xl border border-white/10 bg-[#121212] py-1 shadow-2xl">
+          <button
+            type="button"
+            role="menuitem"
+            onClick={logOut}
+            className="block w-full px-4 py-3 text-left text-sm font-semibold text-red-400 hover:bg-white/10"
+          >
+            Log Out
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ProfileTopBar({ showSettings }: { showSettings: boolean }) {
+  return (
+    <div className="flex items-center justify-between">
+      <Wordmark className="text-3xl" />
+      {showSettings ? <ProfileSettingsMenu /> : <span className="h-10 w-10" />}
+    </div>
   );
 }
 
@@ -299,8 +375,9 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
 
   if (!profile) {
     return (
-      <section className="px-4 pt-4">
-        <div className="animate-pulse">
+      <section className="px-4 pt-4 text-white">
+        <ProfileTopBar showSettings={viewingSelf} />
+        <div className="mt-4 animate-pulse">
           <div className="h-8 w-28 rounded bg-white/10" />
           <div className="mt-4 flex items-center gap-6">
             <div className="h-20 w-20 rounded-full bg-[#121212]" />
@@ -323,8 +400,8 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
 
   return (
     <section className="px-4 pt-4 text-white">
-      <Wordmark className="text-3xl" />
-      <div className="flex items-center gap-6">
+      <ProfileTopBar showSettings={viewingSelf} />
+      <div className="mt-4 flex items-center gap-6">
         <label className="relative cursor-pointer rounded-full bg-gradient-to-tr from-[#EAB308] via-[#FDE68A] to-[#EAB308] p-[3px]">
           {profile.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
