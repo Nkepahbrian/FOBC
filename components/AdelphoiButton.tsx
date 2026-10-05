@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { toggleAdelphoi, useAdelphoi } from "@/lib/community/adelphoi";
+import { ensureAdelphoiLoaded, getAdelphoiSnapshot, toggleAdelphoi, useAdelphoi } from "@/lib/community/adelphoi";
 import { cn } from "@/lib/utils";
 
 export function AdelphoiButton({
@@ -20,10 +20,16 @@ export function AdelphoiButton({
   const { me, ids, ready } = useAdelphoi();
   const [pending, setPending] = useState(false);
   const [override, setOverride] = useState<boolean | null>(null);
-  if (!ready || !me || me === userId) return null;
+  if (ready && (!me || me === userId)) return null;
 
-  const connected = override ?? ids.has(userId);
-  const label = connected ? "Following" : followBack ? "Follow back Adelphos" : "Follow Adelphoi";
+  const connected = override ?? (ready && ids.has(userId));
+  const label = connected
+    ? "Following"
+    : variant === "compact"
+      ? "Follow Adelphos"
+      : followBack
+        ? "Follow back Adelphos"
+        : "Follow Adelphoi";
 
   return (
     <button
@@ -38,6 +44,14 @@ export function AdelphoiButton({
         setOverride(next);
         onChange?.(next ? 1 : -1);
         setPending(true);
+        await ensureAdelphoiLoaded();
+        const viewer = getAdelphoiSnapshot();
+        if (!viewer.me || viewer.me === userId) {
+          setPending(false);
+          setOverride(null);
+          onChange?.(next ? -1 : 1);
+          return;
+        }
         const result = await toggleAdelphoi(userId, name);
         setPending(false);
         if (!result) {

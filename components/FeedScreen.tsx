@@ -92,6 +92,10 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
       if (saved) window.sessionStorage.removeItem("fobc-optimistic-post");
       else next = { ...next, posts: [optimistic, ...next.posts.filter((post) => post.id !== optimistic.id)] };
     }
+    next = {
+      ...next,
+      posts: [...next.posts].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()),
+    };
     setSnapshot(next);
   }, []);
 
@@ -198,7 +202,7 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
     setCommentsByPost((current) => ({ ...current, [postId]: comments }));
   }
 
-  async function onComment(postId: string, content: string) {
+  async function onComment(postId: string, content: string, parentId?: string | null) {
     const pending = {
       id: `local-${Date.now()}`,
       postId,
@@ -207,6 +211,9 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
       avatarUrl: viewerAvatar,
       content: content.trim(),
       createdAt: new Date().toISOString(),
+      parentId: parentId ?? null,
+      amenCount: 0,
+      likedByMe: false,
     };
     setCommentsByPost((current) => ({
       ...current,
@@ -223,7 +230,7 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
         : current
     );
 
-    const comment = await addComment(postId, content);
+    const comment = await addComment(postId, content, parentId);
     if (!comment) {
       setCommentsByPost((current) => ({
         ...current,

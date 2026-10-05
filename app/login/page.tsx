@@ -9,11 +9,7 @@ import { destinationForUser } from "@/lib/auth/destination";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
-const AUTH_EMAIL_KEY = "fobc-auth-email";
 const AUTH_INTENT_KEY = "fobc-auth-intent";
-const AUTH_NAME_KEY = "fobc-auth-name";
-const AUTH_PHONE_KEY = "fobc-auth-phone";
-const AUTH_PASSWORD_KEY = "fobc-auth-password";
 
 const fieldClass =
   "mt-2 w-full rounded-2xl border border-white/10 bg-black px-4 py-3.5 text-white outline-none ring-[#EAB308] transition placeholder:text-zinc-500 focus:border-[#EAB308] focus:ring-2";
@@ -87,24 +83,44 @@ export default function LoginPage() {
         return;
       }
 
-      const { error: otpError } = await supabase.auth.signInWithOtp({
+      const { data, error: signUpError } = await supabase.auth.signUp({
         email: cleanEmail,
+        password,
+        options: {
+          data: {
+            full_name: name,
+            ...(phoneNumber ? { phone_number: phoneNumber } : {}),
+          },
+        },
       });
 
-      setPending(false);
-
-      if (otpError) {
-        setError(otpError.message);
+      if (signUpError) {
+        setPending(false);
+        setError(signUpError.message);
         return;
       }
 
-      sessionStorage.setItem(AUTH_EMAIL_KEY, cleanEmail);
-      sessionStorage.setItem(AUTH_INTENT_KEY, "signup");
-      sessionStorage.setItem(AUTH_NAME_KEY, name);
-      sessionStorage.setItem(AUTH_PASSWORD_KEY, password);
-      if (phoneNumber) sessionStorage.setItem(AUTH_PHONE_KEY, phoneNumber);
-      else sessionStorage.removeItem(AUTH_PHONE_KEY);
-      router.push(`/verify-otp?email=${encodeURIComponent(cleanEmail)}`);
+      let user = data.user;
+      if (!data.session) {
+        const signedIn = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+        if (signedIn.error || !signedIn.data.user) {
+          setPending(false);
+          setError(signedIn.error?.message ?? "The account was created, but the session did not start.");
+          return;
+        }
+        user = signedIn.data.user;
+      }
+
+      if (user) {
+        try {
+          await destinationForUser(supabase, user, "signin");
+        } catch {
+          /* the feed can finish profile details */
+        }
+      }
+
+      router.replace("/feed");
+      router.refresh();
       return;
     }
 
@@ -131,7 +147,7 @@ export default function LoginPage() {
       title={mode === "signup" ? "Create account" : "Welcome back"}
       subtitle={
         mode === "signup"
-          ? "Join with your email. We’ll send an 8-digit code to confirm it."
+          ? "Create your account and go straight into the community."
           : "Sign in with the email and password for your account."
       }
     >

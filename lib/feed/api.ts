@@ -364,26 +364,19 @@ export async function loadCommunity(): Promise<CommunitySnapshot> {
 }
 
 function rankPosts(posts: FeedPost[], convention: boolean) {
-  const byEngagement = (left: FeedPost, right: FeedPost) => {
-    const pin = Number(right.pinned) - Number(left.pinned);
-    if (pin) return pin;
-    if (right.amenCount !== left.amenCount) return right.amenCount - left.amenCount;
-    return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
-  };
-
-  const sorted = [...posts].sort(byEngagement);
+  const sorted = [...posts].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
   if (!convention || sorted.length === 0) return sorted;
 
-  const featured = [...sorted].sort(
+  const featuredId = [...posts].sort(
     (left, right) =>
-      right.amenCount - left.amenCount ||
-      new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
-  )[0];
+      right.amenCount - left.amenCount || new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+  )[0]?.id;
 
-  return [
-    { ...featured, pinned: true, featured: true },
-    ...sorted.filter((post) => post.id !== featured.id).map((post) => ({ ...post, featured: false })),
-  ];
+  return sorted.map((post) => ({
+    ...post,
+    featured: post.id === featuredId,
+    pinned: post.id === featuredId,
+  }));
 }
 
 async function currentUserId() {
@@ -499,39 +492,80 @@ export async function togglePrayer(post: FeedPost) {
   return next;
 }
 
+const replyMarker = /^\s*\[\[fobc-reply:([0-9a-f-]+)\]\]\s*/i;
+
+function readReply(content: string, parentId?: string | null) {
+  const match = content.match(replyMarker);
+  return {
+    parentId: parentId || match?.[1] || null,
+    content: content.replace(replyMarker, ""),
+  };
+}
+
 export async function loadComments(postId: string): Promise<FeedComment[]> {
   if (!getSupabaseEnv().isConfigured) return [];
 
   try {
     const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     const tables = ["post_comments", "comments"];
 
     for (const table of tables) {
-      const { data, error } = await supabase
+      const withParent = await supabase
         .from(table)
-        .select("id, post_id, user_id, content, created_at")
+        .select("id, post_id, user_id, content, created_at, parent_id")
         .eq("post_id", postId)
         .order("created_at", { ascending: true });
 
-      if (error) {
-        if (missingRelation(error.message)) continue;
+      const result =
+        withParent.error && /parent_id/i.test(withParent.error.message)
+          ? await supabase
+              .from(table)
+              .select("id, post_id, user_id, content, created_at")
+              .eq("post_id", postId)
+              .order("created_at", { ascending: true })
+          : withParent;
+
+      if (result.error) {
+        if (missingRelation(result.error.message)) continue;
         return [];
       }
 
-      const rows = data ?? [];
+      const rows = (result.data ?? []) as Array<{
+        id: string;
+        post_id: string;
+        user_id: string | null;
+        content: string;
+        created_at: string;
+        parent_id?: string | null;
+      }>;
       const ids = Array.from(new Set(rows.map((row) => row.user_id).filter((id): id is string => Boolean(id))));
-      const profiles = ids.length ? await supabase.from("profiles").select("id, full_name, avatar_url").in("id", ids) : { data: [] };
+      const commentIds = rows.map((row) => row.id);
+      const [profiles, likes] = await Promise.all([
+        ids.length ? supabase.from("profiles").select("id, full_name, avatar_url").in("id", ids) : Promise.resolve({ data: [] }),
+        commentIds.length
+          ? supabase.from("comment_likes").select("comment_id, user_id").in("comment_id", commentIds)
+          : Promise.resolve({ data: [] as { comment_id: string; user_id: string }[] }),
+      ]);
       const byId = new Map((profiles.data ?? []).map((profile) => [profile.id, profile]));
+      const likeRows = likes.data ?? [];
       return rows.map((row) => {
         const profile = byId.get(row.user_id);
+        const reply = readReply(row.content, "parent_id" in row ? (row.parent_id as string | null) : null);
+        const amenRows = likeRows.filter((like) => like.comment_id === row.id);
         return {
           id: row.id,
           postId: row.post_id,
           userId: row.user_id ?? null,
           fullName: profile?.full_name || "Blessing member",
           avatarUrl: profile?.avatar_url ?? null,
-          content: row.content,
+          content: reply.content,
           createdAt: row.created_at,
+          parentId: reply.parentId,
+          amenCount: amenRows.length,
+          likedByMe: Boolean(user && amenRows.some((like) => like.user_id === user.id)),
         };
       });
     }
@@ -542,7 +576,16 @@ export async function loadComments(postId: string): Promise<FeedComment[]> {
   }
 }
 
-export async function addComment(postId: string, content: string): Promise<FeedComment | null> {
+export async function toggleCommentAmen(commentId: string, liked: boolean) {
+  const { supabase, userId } = await currentUserId();
+  if (!userId) return false;
+  const result = liked
+    ? await supabase.from("comment_likes").delete().eq("comment_id", commentId).eq("user_id", userId)
+    : await supabase.from("comment_likes").insert({ comment_id: commentId, user_id: userId });
+  return !result.error;
+}
+
+export async function addComment(postId: string, content: string, parentId?: string | null): Promise<FeedComment | null> {
   const text = content.trim();
   if (!text || !getSupabaseEnv().isConfigured) return null;
 
@@ -552,18 +595,29 @@ export async function addComment(postId: string, content: string): Promise<FeedC
 
     const tables = ["post_comments", "comments"];
     for (const table of tables) {
-      const { data, error } = await supabase
-        .from(table)
-        .insert({ post_id: postId, user_id: userId, content: text })
-        .select("id, post_id, content, created_at")
-        .single();
+      const payload: Record<string, string | null> = {
+        post_id: postId,
+        user_id: userId,
+        content: text,
+        ...(parentId ? { parent_id: parentId } : {}),
+      };
+      let inserted = await supabase.from(table).insert(payload).select("id, post_id, content, created_at, parent_id").single();
+      if (inserted.error && /parent_id/i.test(inserted.error.message)) {
+        const packed = parentId ? `[[fobc-reply:${parentId}]] ${text}` : text;
+        inserted = await supabase
+          .from(table)
+          .insert({ post_id: postId, user_id: userId, content: packed })
+          .select("id, post_id, content, created_at")
+          .single();
+      }
 
+      const { data, error } = inserted;
       if (!error && data) {
         const profile = await supabase.from("profiles").select("full_name, avatar_url").eq("id", userId).maybeSingle();
         const fullName = profile.data?.full_name || "You";
         const owner = await supabase.from("posts").select("user_id").eq("id", postId).maybeSingle();
         const authorId = owner.data?.user_id ? String(owner.data.user_id) : "";
-        if (authorId) {
+        if (authorId && authorId !== userId) {
           await notifyRecipient({
             recipientId: authorId,
             kind: "comment",
@@ -571,14 +625,18 @@ export async function addComment(postId: string, content: string): Promise<FeedC
             href: `/post/${postId}?from=notifications&comments=1`,
           });
         }
+        const reply = readReply(data.content, "parent_id" in data ? (data.parent_id as string | null) : parentId);
         return {
           id: data.id,
           postId: data.post_id,
           userId,
           fullName,
           avatarUrl: profile.data?.avatar_url ?? null,
-          content: data.content,
+          content: reply.content,
           createdAt: data.created_at,
+          parentId: reply.parentId,
+          amenCount: 0,
+          likedByMe: false,
         };
       }
 

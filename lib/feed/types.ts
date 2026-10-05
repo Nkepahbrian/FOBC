@@ -47,6 +47,9 @@ export type FeedComment = {
   avatarUrl: string | null;
   content: string;
   createdAt: string;
+  parentId: string | null;
+  amenCount: number;
+  likedByMe: boolean;
 };
 
 export type LiveEvent = {

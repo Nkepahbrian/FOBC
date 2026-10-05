@@ -87,7 +87,7 @@ export function PostScreen({ postId }: { postId: string }) {
     setComments(await loadComments(id));
   }
 
-  async function onComment(id: string, content: string) {
+  async function onComment(id: string, content: string, parentId?: string | null) {
     const pending: FeedComment = {
       id: `local-${Date.now()}`,
       postId: id,
@@ -96,10 +96,13 @@ export function PostScreen({ postId }: { postId: string }) {
       avatarUrl: viewerAvatar,
       content: content.trim(),
       createdAt: new Date().toISOString(),
+      parentId: parentId ?? null,
+      amenCount: 0,
+      likedByMe: false,
     };
     setComments((current) => [...current, pending]);
     setPost((current) => (current ? { ...current, commentCount: current.commentCount + 1 } : current));
-    const saved = await addComment(id, content);
+    const saved = await addComment(id, content, parentId);
     if (!saved) {
       setComments((current) => current.filter((item) => item.id !== pending.id));
       setPost((current) => (current ? { ...current, commentCount: Math.max(0, current.commentCount - 1) } : current));
