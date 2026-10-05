@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Home, MessageCircle, Plus, Trophy, User } from "lucide-react";
+import { useUnreadMessages } from "@/lib/inbox/unread";
 import { cn } from "@/lib/utils";
 
 const items = [
@@ -15,6 +16,7 @@ const items = [
 
 export function BottomNav() {
   const pathname = usePathname();
+  const unreadMessages = useUnreadMessages();
 
   return (
     <nav
@@ -40,13 +42,18 @@ export function BottomNav() {
               >
                 <span
                   className={cn(
-                    "flex items-center justify-center",
+                    "relative flex items-center justify-center",
                     accent
                       ? "h-14 w-14 rounded-full bg-[#EAB308] text-black shadow-lg shadow-yellow-500/30"
                       : "h-6 w-6"
                   )}
                 >
                   <Icon className={accent ? "h-7 w-7" : "h-5 w-5"} strokeWidth={accent ? 2.4 : 2} />
+                  {item.href === "/chat" && unreadMessages > 0 ? (
+                    <span className="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#EAB308] px-1 text-[10px] font-bold leading-none text-black">
+                      {unreadMessages > 99 ? "99+" : unreadMessages}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="truncate">{item.label}</span>
               </Link>

@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { markNotificationsRead, syncNotifications, useNotifications, type NotificationKind } from "@/lib/notifications/store";
+import { markNotificationsReadRemote, syncNotifications, useNotifications, type NotificationKind } from "@/lib/notifications/store";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
 const kindLabel: Record<NotificationKind, string> = {
   amen: "Amen",
   comment: "Blessing",
+  share: "Share",
   adelphoi: "Adelphoi",
   system: "Update",
 };
@@ -26,11 +27,11 @@ export function NotificationsPanel({ active = true }: { active?: boolean }) {
     let cancelled = false;
     const supabase = createClient();
     supabase.auth.getUser().then(async ({ data }) => {
-      if (!cancelled && data.user) await syncNotifications(data.user.id);
-      if (!cancelled) {
-        markNotificationsRead();
-        setSettled(true);
+      if (!cancelled && data.user) {
+        await syncNotifications(data.user.id);
+        await markNotificationsReadRemote(data.user.id);
       }
+      if (!cancelled) setSettled(true);
     });
     return () => {
       cancelled = true;

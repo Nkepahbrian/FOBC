@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FeedCard } from "@/components/FeedCard";
 import { CommentDrawer } from "@/components/CommentDrawer";
@@ -28,6 +29,17 @@ export function PostScreen({ postId }: { postId: string }) {
   const [viewerAvatar, setViewerAvatar] = useState<string | null>(null);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [comments, setComments] = useState<FeedComment[]>([]);
+  const [fromNotifications, setFromNotifications] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromNotes = params.get("from") === "notifications";
+    setFromNotifications(fromNotes);
+    if (params.get("comments") === "1") {
+      setCommentsOpen(true);
+      loadComments(postId).then(setComments);
+    }
+  }, [postId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -95,16 +107,33 @@ export function PostScreen({ postId }: { postId: string }) {
     setComments((current) => current.map((item) => (item.id === pending.id ? saved : item)));
   }
 
+  const backLink = fromNotifications ? (
+    <Link href="/notifications" className="mb-3 inline-flex px-4 pt-4 text-sm font-semibold text-[#EAB308]">
+      Back
+    </Link>
+  ) : null;
+
   if (missing) {
-    return <p className="px-4 pt-8 text-sm text-zinc-400">This post is no longer available.</p>;
+    return (
+      <div>
+        {backLink}
+        <p className="px-4 pt-8 text-sm text-zinc-400">This post is no longer available.</p>
+      </div>
+    );
   }
 
   if (!post) {
-    return <div className="mx-4 mt-6 aspect-[4/5] animate-pulse rounded-2xl bg-[#121212]" />;
+    return (
+      <div>
+        {backLink}
+        <div className="mx-4 mt-6 aspect-[4/5] animate-pulse rounded-2xl bg-[#121212]" />
+      </div>
+    );
   }
 
   return (
     <div className="pt-2">
+      {backLink}
       <FeedCard
         post={post}
         viewerId={viewerId}

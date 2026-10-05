@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useSyncExternalStore } from "react";
-import { recordNotification } from "@/lib/notifications/store";
+import { notifyRecipient } from "@/lib/notifications/store";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
@@ -72,7 +72,7 @@ export function useAdelphoi() {
   return state;
 }
 
-export async function toggleAdelphoi(targetId: string, targetName: string): Promise<"followed" | "unfollowed" | null> {
+export async function toggleAdelphoi(targetId: string, _targetName: string): Promise<"followed" | "unfollowed" | null> {
   await ensureAdelphoiLoaded();
   const { me, ids } = snapshot;
   if (!me || me === targetId || !getSupabaseEnv().isConfigured) return null;
@@ -100,12 +100,11 @@ export async function toggleAdelphoi(targetId: string, targetName: string): Prom
     return null;
   }
 
-  recordNotification({
-    id: `adelphoi-out-${targetId}`,
+  await notifyRecipient({
+    recipientId: targetId,
     kind: "adelphoi",
-    title: targetName || "Adelphoi",
-    body: `You are now Adelphoi with ${targetName || "this member"}.`,
-    href: `/profile/${targetId}`,
+    body: "Started following you.",
+    href: `/profile/${me}?from=notifications`,
   });
   return "followed";
 }

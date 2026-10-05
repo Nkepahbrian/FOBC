@@ -216,14 +216,23 @@ function withThoughts(model: ProfileModel): ProfileModel {
   };
 }
 
+function adelphoiLabel(count: number) {
+  return count === 1 ? "Adelphos" : "Adelphoi";
+}
+
 export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolean }) {
   const adelphoi = useAdelphoi();
   const viewingSelf = isOwn || (adelphoi.me !== null && adelphoi.me === userId);
   const [profile, setProfile] = useState<ProfileModel | null>(null);
+  const [fromNotifications, setFromNotifications] = useState(false);
   const [notice, setNotice] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [editingBio, setEditingBio] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
+
+  useEffect(() => {
+    setFromNotifications(new URLSearchParams(window.location.search).get("from") === "notifications");
+  }, []);
 
   const load = useCallback(async (cancelled: () => boolean) => {
     const supabase = createClient();
@@ -400,6 +409,11 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
 
   return (
     <section className="px-4 pt-4 text-white">
+      {fromNotifications ? (
+        <Link href="/notifications" className="mb-3 inline-flex text-sm font-semibold text-[#EAB308]">
+          Back
+        </Link>
+      ) : null}
       <ProfileTopBar showSettings={viewingSelf} />
       <div className="mt-4 flex items-center gap-6">
         <label className="relative cursor-pointer rounded-full bg-gradient-to-tr from-[#EAB308] via-[#FDE68A] to-[#EAB308] p-[3px]">
@@ -441,7 +455,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
           </div>
           <div>
             <dt className="text-lg font-semibold">{profile.followers}</dt>
-            <dd className="text-xs text-zinc-400">Adelphoi</dd>
+            <dd className="text-xs text-zinc-400">{adelphoiLabel(profile.followers)}</dd>
           </div>
         </dl>
       </div>
@@ -495,9 +509,10 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
             userId={profile.id}
             name={profile.fullName}
             variant="prominent"
-            onChange={(connected) => {
+            followBack={fromNotifications}
+            onChange={(delta) => {
               setProfile((current) =>
-                current ? { ...current, followers: Math.max(0, current.followers + (connected ? 1 : -1)) } : current
+                current ? { ...current, followers: Math.max(0, current.followers + delta) } : current
               );
             }}
           />

@@ -4,7 +4,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
-export type NotificationKind = "amen" | "comment" | "adelphoi" | "system";
+export type NotificationKind = "amen" | "comment" | "share" | "adelphoi" | "system";
 
 export type AppNotification = {
   id: string;
@@ -23,6 +23,7 @@ type NotificationDraft = {
   body: string;
   href?: string;
   createdAt?: string;
+  read?: boolean;
 };
 
 const STORAGE_KEY = "fobc-notifications";
@@ -60,11 +61,35 @@ export function subscribeNotifications(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
+let watching = false;
+
+function ensureNotificationWatch() {
+  if (watching || typeof window === "undefined" || !getSupabaseEnv().isConfigured) return;
+  watching = true;
+  const supabase = createClient();
+  supabase.auth.getUser().then(({ data }) => {
+    const userId = data.user?.id;
+    if (!userId) return;
+    syncNotifications(userId).catch(() => undefined);
+    supabase
+      .channel(`fobc-notifications-${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "notifications", filter: `recipient_id=eq.${userId}` },
+        () => {
+          syncNotifications(userId).catch(() => undefined);
+        }
+      )
+      .subscribe();
+  });
+}
+
 export function useNotifications() {
   const list = useSyncExternalStore(subscribeNotifications, getNotificationsSnapshot, () => EMPTY);
   useEffect(() => {
     readStorage();
     emit();
+    ensureNotificationWatch();
   }, []);
   return list;
 }
@@ -81,7 +106,7 @@ export function recordNotification(input: NotificationDraft) {
     body: input.body,
     href: input.href,
     createdAt: existing?.createdAt ?? input.createdAt ?? new Date().toISOString(),
-    read: existing?.read ?? false,
+    read: existing?.read ?? input.read ?? false,
   };
   items = [next, ...items.filter((item) => item.id !== input.id)].slice(0, 50);
   writeStorage();
@@ -92,6 +117,40 @@ export function markNotificationsRead() {
   if (items.length === 0 || items.every((item) => item.read)) return;
   items = items.map((item) => (item.read ? item : { ...item, read: true }));
   writeStorage();
+}
+
+export async function markNotificationsReadRemote(userId: string) {
+  markNotificationsRead();
+  if (!userId || !getSupabaseEnv().isConfigured) return;
+  const supabase = createClient();
+  await supabase.from("notifications").update({ read: true }).eq("recipient_id", userId).eq("read", false);
+}
+
+const kinds = new Set<NotificationKind>(["amen", "comment", "share", "adelphoi", "system"]);
+
+export async function notifyRecipient(input: {
+  recipientId: string;
+  kind: NotificationKind;
+  body: string;
+  href: string;
+}) {
+  if (!input.recipientId || !getSupabaseEnv().isConfigured) return;
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const actorId = user?.id ?? null;
+  if (!actorId || actorId === input.recipientId) return;
+
+  const inserted = await supabase.from("notifications").insert({
+    recipient_id: input.recipientId,
+    actor_id: actorId,
+    kind: input.kind,
+    body: input.body,
+    href: input.href,
+  });
+
+  if (!inserted.error || missingRelation(inserted.error.message)) return;
 }
 
 function missingRelation(message: string) {
@@ -111,6 +170,32 @@ export async function syncNotifications(userId: string) {
 
   try {
     const supabase = createClient();
+    const stored = await supabase
+      .from("notifications")
+      .select("id, actor_id, kind, body, href, created_at, read")
+      .eq("recipient_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(40);
+
+    if (!stored.error) {
+      const names = await namesFor((stored.data ?? []).map((row) => String(row.actor_id || "")));
+      for (const row of stored.data ?? []) {
+        const kind = kinds.has(row.kind as NotificationKind) ? (row.kind as NotificationKind) : "system";
+        recordNotification({
+          id: `db-${row.id}`,
+          kind,
+          title: names.get(String(row.actor_id)) || "Adelphoi",
+          body: String(row.body || ""),
+          href: row.href || undefined,
+          createdAt: row.created_at,
+          read: Boolean(row.read),
+        });
+      }
+      return;
+    }
+
+    if (!missingRelation(stored.error.message)) return;
+
     const postsResult = await supabase.from("posts").select("id").eq("user_id", userId).order("created_at", { ascending: false }).limit(40);
     const postIds = (postsResult.data ?? []).map((post) => String(post.id));
 
@@ -136,7 +221,7 @@ export async function syncNotifications(userId: string) {
             kind: "amen",
             title: names.get(actorId) || "Adelphoi",
             body: "Amened your post.",
-            href: `/post/${row.post_id}`,
+            href: `/post/${row.post_id}?from=notifications`,
             createdAt: row.created_at,
           });
         }
@@ -165,7 +250,7 @@ export async function syncNotifications(userId: string) {
             kind: "comment",
             title: names.get(actorId) || "Adelphoi",
             body: text ? `Wrote a blessing: ${text.slice(0, 80)}` : "Wrote a blessing on your post.",
-            href: `/post/${row.post_id}`,
+            href: `/post/${row.post_id}?from=notifications&comments=1`,
             createdAt: row.created_at,
           });
         }
@@ -188,7 +273,7 @@ export async function syncNotifications(userId: string) {
           kind: "adelphoi",
           title: names.get(actorId) || "Adelphoi",
           body: "Joined your Adelphoi.",
-          href: `/profile/${actorId}`,
+          href: `/profile/${actorId}?from=notifications`,
           createdAt: row.created_at,
         });
       }

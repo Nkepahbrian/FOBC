@@ -1,7 +1,7 @@
 import type { CreateCategory, FeedComment, FeedPost, LiveEvent, PostCategory } from "@/lib/feed/types";
 import { isConventionActive, isLiveEvent, postCategories } from "@/lib/feed/types";
 import { writeCache } from "@/lib/cache/swr";
-import { recordNotification } from "@/lib/notifications/store";
+import { notifyRecipient } from "@/lib/notifications/store";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
@@ -439,17 +439,13 @@ export async function persistAmen(post: FeedPost) {
   const nextCount = Math.max(0, post.amenCount + (post.likedByMe ? -1 : 1));
   const supabase = createClient();
   await supabase.from("posts").update({ likes_count: nextCount }).eq("id", post.id);
-  if (!post.likedByMe) {
-    const { userId } = await currentUserId();
-    if (userId && userId !== post.userId) {
-      recordNotification({
-        id: `amen-out-${post.id}-${userId}`,
-        kind: "amen",
-        title: post.fullName,
-        body: `You amened ${post.fullName}'s blessing.`,
-        href: `/post/${post.id}`,
-      });
-    }
+  if (!post.likedByMe && post.userId) {
+    await notifyRecipient({
+      recipientId: post.userId,
+      kind: "amen",
+      body: "Amened your post.",
+      href: `/post/${post.id}?from=notifications`,
+    });
   }
   return true;
 }
@@ -555,14 +551,16 @@ export async function addComment(postId: string, content: string): Promise<FeedC
       if (!error && data) {
         const profile = await supabase.from("profiles").select("full_name, avatar_url").eq("id", userId).maybeSingle();
         const fullName = profile.data?.full_name || "You";
-        recordNotification({
-          id: `comment-out-${data.id}`,
-          kind: "comment",
-          title: fullName,
-          body: `You wrote a blessing: ${text.slice(0, 80)}`,
-          href: `/post/${postId}`,
-          createdAt: data.created_at,
-        });
+        const owner = await supabase.from("posts").select("user_id").eq("id", postId).maybeSingle();
+        const authorId = owner.data?.user_id ? String(owner.data.user_id) : "";
+        if (authorId) {
+          await notifyRecipient({
+            recipientId: authorId,
+            kind: "comment",
+            body: text ? `Wrote a blessing: ${text.slice(0, 80)}` : "Wrote a blessing on your post.",
+            href: `/post/${postId}?from=notifications&comments=1`,
+          });
+        }
         return {
           id: data.id,
           postId: data.post_id,

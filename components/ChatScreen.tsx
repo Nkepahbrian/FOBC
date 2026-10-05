@@ -1,12 +1,14 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { Phone, Search, X } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Search, X } from "lucide-react";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { StylePalette } from "@/components/StylePalette";
 import { ThoughtCard } from "@/components/ThoughtCard";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
+import { markConversationRead } from "@/lib/inbox/unread";
 import { loadScriptures, saveScripture, type ScriptureNote } from "@/lib/scripture/api";
 import { cardStyleById } from "@/lib/styles/cards";
 
@@ -54,6 +56,7 @@ async function selectProfiles(
 }
 
 export function ChatScreen() {
+  const router = useRouter();
   const [me, setMe] = useState<string | null>(null);
   const [threads, setThreads] = useState<Thread[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -72,6 +75,8 @@ export function ChatScreen() {
   const [scriptureDraft, setScriptureDraft] = useState("");
   const [scriptureStyle, setScriptureStyle] = useState("red");
   const [sharing, setSharing] = useState(false);
+  const [typingName, setTypingName] = useState<string | null>(null);
+  const typingChannel = useRef<RealtimeChannel | null>(null);
   const params = useSearchParams();
 
   const loadThreads = useCallback(async (userId: string) => {
@@ -164,9 +169,19 @@ export function ChatScreen() {
     const supabase = createClient();
     const channel = supabase
       .channel("fobc-chat")
-      .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, () => {
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
+        const row = payload.new as ChatMessage;
+        const inThread =
+          active &&
+          ((row.sender_id === me && row.receiver_id === active.id) || (row.sender_id === active.id && row.receiver_id === me));
+        if (inThread && row.sender_id !== me) {
+          setMessages((current) => (current.some((message) => message.id === row.id) ? current : [...current, row]));
+          markConversationRead(me, active.id).catch(() => undefined);
+        }
         loadThreads(me);
-        if (active) loadThread(me, active.id);
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "messages" }, () => {
+        loadThreads(me);
       })
       .subscribe();
 
@@ -174,6 +189,38 @@ export function ChatScreen() {
       supabase.removeChannel(channel);
     };
   }, [active, loadThread, loadThreads, me]);
+
+  useEffect(() => {
+    if (!me || !active) {
+      setTypingName(null);
+      return;
+    }
+    const supabase = createClient();
+    const room = `typing:${[me, active.id].sort().join(":")}`;
+    const channel = supabase.channel(room, { config: { presence: { key: me } } });
+    typingChannel.current = channel;
+    channel.on("presence", { event: "sync" }, () => {
+      const state = channel.presenceState() as Record<string, Array<{ typing?: boolean; name?: string }>>;
+      const typing = Object.entries(state)
+        .filter(([key]) => key !== me)
+        .flatMap(([, metas]) => metas)
+        .find((meta) => meta.typing);
+      setTypingName(typing ? typing.name || displayName(active) : null);
+    });
+    channel.subscribe(async (status) => {
+      if (status === "SUBSCRIBED") await channel.track({ typing: false, name: myName });
+    });
+    return () => {
+      typingChannel.current = null;
+      supabase.removeChannel(channel);
+    };
+  }, [active, me, myName]);
+
+  useEffect(() => {
+    const channel = typingChannel.current;
+    if (!channel || !active) return;
+    channel.track({ typing: draft.trim().length > 0, name: myName }).catch(() => undefined);
+  }, [active, draft, myName]);
 
   useEffect(() => {
     const trimmed = query.trim().replace(/[%_]/g, "");
@@ -199,6 +246,7 @@ export function ChatScreen() {
       if (!cancelled && rows[0]) {
         setActive(rows[0]);
         loadThread(me, rows[0].id);
+        markConversationRead(me, rows[0].id).catch(() => undefined);
       }
     });
     return () => {
@@ -231,7 +279,17 @@ export function ChatScreen() {
     setActive(person);
     setQuery("");
     setPeople([]);
-    if (me) await loadThread(me, person.id);
+    if (me) {
+      await loadThread(me, person.id);
+      await markConversationRead(me, person.id);
+      loadThreads(me);
+    }
+  }
+
+  function closeConversation() {
+    setActive(null);
+    setTypingName(null);
+    router.replace("/chat");
   }
 
   async function send(event: FormEvent<HTMLFormElement>) {
@@ -273,43 +331,48 @@ export function ChatScreen() {
   if (active) {
     const name = displayName(active);
     return (
-      <section className="flex min-h-[70vh] flex-col px-4 pt-4 text-white">
+      <section className="flex h-[100dvh] max-h-[100dvh] flex-col overflow-x-hidden px-4 pt-4 text-white">
         <div className="flex items-center gap-3">
-          <button type="button" onClick={() => setActive(null)} className="text-sm font-semibold text-[#EAB308]">
+          <button type="button" onClick={closeConversation} className="text-sm font-semibold text-[#EAB308]">
             Back
           </button>
           <Avatar person={active} />
           <div className="min-w-0">
             <h1 className="truncate text-base font-semibold">{name}</h1>
-            <p className="truncate text-xs text-zinc-400">{active.bio || "Active now"}</p>
+            <p className="truncate text-xs text-zinc-400">{typingName ? `${typingName} is typing...` : active.bio || "Active now"}</p>
           </div>
         </div>
-        <div className="mt-4 flex flex-1 flex-col gap-2">
+        <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto">
           {activeMessages.length === 0 ? <p className="text-sm text-zinc-400">Say hello and start the conversation.</p> : null}
           {activeMessages.map((message) => {
             const mine = message.sender_id === me;
+            const sender = mine ? { id: me || "", full_name: myName, avatar_url: myAvatar, bio: null } : active;
             return (
-              <p
-                key={message.id}
-                className={
-                  mine
-                    ? "ml-10 rounded-2xl rounded-br-md bg-[#EAB308] px-3 py-2 text-sm text-black"
-                    : "mr-10 rounded-2xl rounded-bl-md bg-[#121212] px-3 py-2 text-sm text-white"
-                }
-              >
-                {message.content}
-              </p>
+              <div key={message.id} className={mine ? "flex items-end justify-end gap-2" : "flex items-end justify-start gap-2"}>
+                {mine ? null : <Avatar person={sender} size="sm" />}
+                <p
+                  className={
+                    mine
+                      ? "max-w-[75%] rounded-2xl rounded-br-md bg-[#EAB308] px-3 py-2 text-sm text-black"
+                      : "max-w-[75%] rounded-2xl rounded-bl-md bg-[#121212] px-3 py-2 text-sm text-white"
+                  }
+                >
+                  {message.content}
+                </p>
+                {mine ? <Avatar person={sender} size="sm" /> : null}
+              </div>
             );
           })}
         </div>
+        {typingName ? <p className="pt-2 text-xs text-zinc-400">{typingName} is typing...</p> : null}
         {notice ? <p className="mt-3 text-sm text-[#EAB308]">{notice}</p> : null}
-        <form onSubmit={send} className="mt-4 flex gap-2">
+        <form onSubmit={send} className="mt-4 flex gap-2 pb-24">
           <input
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             placeholder="Write a message"
             aria-label="Write a message"
-            className="h-11 flex-1 rounded-full border border-white/10 bg-black px-4 text-sm text-white outline-none ring-[#EAB308] focus:ring-2"
+            className="h-11 flex-1 rounded-full border border-white/10 bg-black px-4 text-base text-white outline-none ring-[#EAB308] focus:ring-2"
           />
           <button
             type="submit"
@@ -344,7 +407,7 @@ export function ChatScreen() {
   }
 
   return (
-    <section className="text-white">
+    <section className="overflow-x-hidden text-white">
       <div className="px-4 pt-4">
         <h1 className="text-2xl font-semibold tracking-tight">Messages</h1>
         <label className="mt-3 flex h-10 items-center gap-2 rounded-xl bg-[#121212] px-3">
@@ -427,20 +490,6 @@ export function ChatScreen() {
                   <span className="block truncate text-sm text-zinc-400">{thread.lastMessage}</span>
                 </span>
               </button>
-              <button
-                type="button"
-                aria-label={`Call ${displayName(thread.person)}`}
-                onClick={() => {
-                  if (thread.person.phone_number) {
-                    window.location.href = `tel:${thread.person.phone_number}`;
-                    return;
-                  }
-                  setNotice("No phone number is saved on this profile yet.");
-                }}
-                className="flex h-10 w-10 items-center justify-center rounded-full text-white"
-              >
-                <Phone className="h-5 w-5" />
-              </button>
             </div>
           </li>
         ))}
@@ -498,14 +547,15 @@ export function ChatScreen() {
   );
 }
 
-function Avatar({ person }: { person: Person }) {
+function Avatar({ person, size = "md" }: { person: Person; size?: "sm" | "md" }) {
   const name = displayName(person);
+  const box = size === "sm" ? "h-8 w-8 text-xs" : "h-12 w-12 text-sm";
   if (person.avatar_url) {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src={person.avatar_url} alt="" className="h-12 w-12 rounded-full object-cover" />;
+    return <img src={person.avatar_url} alt="" className={`${box} shrink-0 rounded-full object-cover`} />;
   }
   return (
-    <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#121212] text-sm font-semibold text-[#EAB308]">
+    <span className={`flex ${box} shrink-0 items-center justify-center rounded-full bg-[#121212] font-semibold text-[#EAB308]`}>
       {initials(name) || "F"}
     </span>
   );

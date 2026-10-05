@@ -14,7 +14,7 @@ export function FeedHeader() {
   const [notesOpen, setNotesOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const notifications = useNotifications();
-  const unread = notifications.some((item) => !item.read);
+  const unreadCount = notifications.filter((item) => !item.read).length;
 
   useEffect(() => {
     if (!getSupabaseEnv().isConfigured) return;
@@ -55,7 +55,11 @@ export function FeedHeader() {
             className="relative flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/10"
           >
             <Bell className="h-5 w-5" />
-            {unread ? <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[#EAB308]" /> : null}
+            {unreadCount > 0 ? (
+              <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#EAB308] px-1 text-[10px] font-bold leading-none text-black">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            ) : null}
           </button>
         </div>
       </div>

@@ -6,9 +6,18 @@ export type ScriptureNote = {
   avatarUrl: string | null;
   content: string;
   style: string;
+  updatedAt?: string;
 };
 
 const localKey = "fobc-scripture";
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+function isCurrent(updatedAt?: string | null) {
+  if (!updatedAt) return true;
+  const time = new Date(updatedAt).getTime();
+  if (Number.isNaN(time)) return true;
+  return Date.now() - time < WEEK_MS;
+}
 
 function missing(message: string) {
   return /does not exist|schema cache|could not find|column/i.test(message);
@@ -19,7 +28,13 @@ function readLocal(userId: string): ScriptureNote | null {
     const raw = window.localStorage.getItem(localKey);
     if (!raw) return null;
     const note = JSON.parse(raw) as ScriptureNote;
-    return note.userId === userId ? note : null;
+    if (note.userId !== userId) return null;
+    if (!note.updatedAt) {
+      note.updatedAt = new Date().toISOString();
+      writeLocal(note);
+      return note;
+    }
+    return isCurrent(note.updatedAt) ? note : null;
   } catch {
     return null;
   }
@@ -36,18 +51,21 @@ export async function loadScriptures(userId: string, fullName: string, avatarUrl
   const { data: profiles } = await supabase.from("profiles").select("id, full_name, avatar_url").in("id", ids);
   const people = new Map((profiles ?? []).map((profile) => [profile.id as string, profile]));
 
-  const notes = await supabase.from("scripture_notes").select("user_id, content, style").in("user_id", ids);
+  const notes = await supabase.from("scripture_notes").select("user_id, content, style, updated_at").in("user_id", ids);
   const rows: ScriptureNote[] = !notes.error
-    ? (notes.data ?? []).map((row) => {
-        const person = people.get(row.user_id as string);
-        return {
-          userId: row.user_id as string,
-          fullName: (person?.full_name as string | null) || (row.user_id === userId ? fullName : "Community member"),
-          avatarUrl: (person?.avatar_url as string | null) ?? (row.user_id === userId ? avatarUrl : null),
-          content: row.content as string,
-          style: (row.style as string) || "red",
-        };
-      })
+    ? (notes.data ?? [])
+        .filter((row) => isCurrent((row.updated_at as string | null) ?? null))
+        .map((row) => {
+          const person = people.get(row.user_id as string);
+          return {
+            userId: row.user_id as string,
+            fullName: (person?.full_name as string | null) || (row.user_id === userId ? fullName : "Community member"),
+            avatarUrl: (person?.avatar_url as string | null) ?? (row.user_id === userId ? avatarUrl : null),
+            content: row.content as string,
+            style: (row.style as string) || "red",
+            updatedAt: (row.updated_at as string | null) ?? undefined,
+          };
+        })
     : [];
 
   if (notes.error && missing(notes.error.message)) {
@@ -73,13 +91,14 @@ export async function loadScriptures(userId: string, fullName: string, avatarUrl
 }
 
 export async function saveScripture(note: ScriptureNote) {
-  writeLocal(note);
+  const stamped = { ...note, updatedAt: new Date().toISOString() };
+  writeLocal(stamped);
   const supabase = createClient();
   const saved = await supabase.from("scripture_notes").upsert({
-    user_id: note.userId,
-    content: note.content,
-    style: note.style,
-    updated_at: new Date().toISOString(),
+    user_id: stamped.userId,
+    content: stamped.content,
+    style: stamped.style,
+    updated_at: stamped.updatedAt,
   });
   if (!saved.error) return null;
 

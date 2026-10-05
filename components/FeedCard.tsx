@@ -10,6 +10,7 @@ import { ThoughtCard } from "@/components/ThoughtCard";
 import { isSoundOn, setSoundOn } from "@/lib/audio/sound";
 import type { FeedPost } from "@/lib/feed/types";
 import { categoryLabel, formatTimestamp } from "@/lib/feed/types";
+import { notifyRecipient } from "@/lib/notifications/store";
 import { cn } from "@/lib/utils";
 
 type FeedCardProps = {
@@ -69,15 +70,26 @@ export function FeedCard({
   async function share() {
     const url = `${window.location.origin}/feed?post=${post.id}`;
     const text = `${post.fullName} on FOBC: ${post.content}`;
+    let shared = false;
     if (navigator.share) {
       try {
         await navigator.share({ title: "FOBC", text, url });
-        return;
+        shared = true;
       } catch {
         return;
       }
+    } else {
+      window.open(`https://wa.me/?text=${encodeURIComponent(`${text} ${url}`)}`, "_blank", "noopener,noreferrer");
+      shared = true;
     }
-    window.open(`https://wa.me/?text=${encodeURIComponent(`${text} ${url}`)}`, "_blank", "noopener,noreferrer");
+    if (shared && viewerId && viewerId !== post.userId) {
+      await notifyRecipient({
+        recipientId: post.userId,
+        kind: "share",
+        body: "Shared your post.",
+        href: `/post/${post.id}?from=notifications`,
+      });
+    }
   }
 
   useEffect(() => {
