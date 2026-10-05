@@ -13,7 +13,7 @@ const AUTH_EMAIL_KEY = "fobc-auth-email";
 const AUTH_NAME_KEY = "fobc-auth-name";
 const AUTH_PHONE_KEY = "fobc-auth-phone";
 const AUTH_PASSWORD_KEY = "fobc-auth-password";
-const CODE_LENGTH = 6;
+const CODE_LENGTH = 8;
 
 export default function VerifyOtpPage() {
   const router = useRouter();
@@ -93,7 +93,7 @@ export default function VerifyOtpPage() {
       return;
     }
     if (token.length !== CODE_LENGTH) {
-      setError("Enter the 6-digit code from your email.");
+      setError("Enter the 8-digit code from your email.");
       return;
     }
     if (!configured) {
@@ -165,7 +165,7 @@ export default function VerifyOtpPage() {
   }
 
   return (
-    <AuthShell title="Enter your code" subtitle="We sent a 6-digit code to your email. Enter it here to open the community.">
+    <AuthShell title="Enter your code" subtitle="We sent an 8-digit code to your email. Enter it here to open the community.">
       <motion.form
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -176,12 +176,12 @@ export default function VerifyOtpPage() {
         {email ? <p className="text-sm text-zinc-300">{email}</p> : null}
         <div>
           <p className="text-sm font-medium" id="otp-label">
-            6-digit code
+            8-digit code
           </p>
           <div
             role="group"
             aria-labelledby="otp-label"
-            className="mt-3 flex justify-between gap-2"
+            className="mt-3 flex gap-1.5"
             onPaste={(event) => {
               event.preventDefault();
               onPaste(event.clipboardData.getData("text"));
@@ -200,7 +200,7 @@ export default function VerifyOtpPage() {
                 autoComplete={index === 0 ? "one-time-code" : "off"}
                 aria-label={`Digit ${index + 1}`}
                 maxLength={index === 0 ? CODE_LENGTH : 1}
-                className="h-14 w-12 rounded-2xl border border-white/10 bg-black text-center text-2xl font-semibold text-white outline-none ring-[#EAB308] focus:border-[#EAB308] focus:ring-2"
+                className="h-14 w-0 flex-1 rounded-xl border border-white/10 bg-black text-center text-xl font-semibold text-white outline-none ring-[#EAB308] focus:border-[#EAB308] focus:ring-2"
               />
             ))}
           </div>

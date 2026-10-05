@@ -131,7 +131,7 @@ export default function LoginPage() {
       title={mode === "signup" ? "Create account" : "Welcome back"}
       subtitle={
         mode === "signup"
-          ? "Join with your email. We’ll send a 6-digit code to confirm it."
+          ? "Join with your email. We’ll send an 8-digit code to confirm it."
           : "Sign in with the email and password for your account."
       }
     >
