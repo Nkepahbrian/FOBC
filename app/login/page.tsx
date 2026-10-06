@@ -32,6 +32,13 @@ function emailNotConfirmed(message: string | undefined) {
   return Boolean(message && /email not confirmed|not confirmed|confirm your email/i.test(message));
 }
 
+async function confirmSignupEmail(supabase: ReturnType<typeof createClient>, email: string) {
+  const confirmed = await supabase.rpc("confirm_email_signup", { target_email: email });
+  if (confirmed.error && !/does not exist|schema cache|could not find the function|PGRST202/i.test(confirmed.error.message)) {
+    console.error("Could not confirm the new account:", confirmed.error);
+  }
+}
+
 const DEFAULT_BIO = "Add a short bio so the community knows your story.";
 
 async function ensureProfile(
@@ -146,6 +153,7 @@ export default function LoginPage() {
         return;
       }
 
+      await confirmSignupEmail(supabase, cleanEmail);
       let signedIn = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
       let user = signedIn.data.user ?? data.user;
       let session = signedIn.data.session;
@@ -153,6 +161,13 @@ export default function LoginPage() {
       const invalidPassword = Boolean(
         signedIn.error && /invalid login credentials|invalid credentials/i.test(signedIn.error.message) && !emailNotConfirmed(signedIn.error.message)
       );
+
+      if (!session && emailNotConfirmed(signedIn.error?.message)) {
+        await confirmSignupEmail(supabase, cleanEmail);
+        signedIn = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+        user = signedIn.data.user ?? user;
+        session = signedIn.data.session;
+      }
 
       if (!session && !invalidPassword) {
         const activated = await fetch("/api/auth/activate", {
@@ -210,10 +225,15 @@ export default function LoginPage() {
       return;
     }
 
-    const { data, error: signInError } = await supabase.auth.signInWithPassword({
+    let signedIn = await supabase.auth.signInWithPassword({
       email: cleanEmail,
       password,
     });
+    if (emailNotConfirmed(signedIn.error?.message)) {
+      await confirmSignupEmail(supabase, cleanEmail);
+      signedIn = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+    }
+    const { data, error: signInError } = signedIn;
 
     if (signInError || !data.user || !data.session) {
       setPending(false);
