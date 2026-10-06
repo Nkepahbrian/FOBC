@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { Eye, EyeOff } from "lucide-react";
 import { AuthShell } from "@/components/AuthShell";
 import { destinationForUser } from "@/lib/auth/destination";
+import { persistAuthSession } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
@@ -25,6 +26,10 @@ function normalizePhone(input: string) {
 
 function shouldRescueExistingAccount(message: string) {
   return /user already registered|already been registered|invalid login credentials/i.test(message);
+}
+
+function emailNotConfirmed(message: string | undefined) {
+  return Boolean(message && /email not confirmed|not confirmed|confirm your email/i.test(message));
 }
 
 async function saveDisplayName(
@@ -128,24 +133,39 @@ export default function LoginPage() {
         Boolean(signUpError && shouldRescueExistingAccount(signUpError.message)) ||
         Boolean(data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0);
 
-      if (signUpError && !existingAccount) {
+      if (signUpError && !existingAccount && !emailNotConfirmed(signUpError.message)) {
         setPending(false);
         setError(signUpError.message);
         return;
       }
 
-      let user = data.user;
-      let session = data.session;
+      const signedIn = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+      let user = signedIn.data.user ?? data.user;
+      let session = signedIn.data.session ?? data.session;
 
-      if (existingAccount || !session) {
-        const signedIn = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
-        if (signedIn.error || !signedIn.data.user || !signedIn.data.session) {
-          setPending(false);
-          setError(signedIn.error?.message ?? "Could not sign in to the existing account.");
-          return;
+      if (!session && emailNotConfirmed(signedIn.error?.message) && data.user?.id) {
+        const activated = await fetch("/api/auth/activate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: cleanEmail, password, userId: data.user.id }),
+        });
+        if (activated.ok) {
+          const tokens = (await activated.json()) as { access_token?: string; refresh_token?: string };
+          if (tokens.access_token && tokens.refresh_token) {
+            const restored = await supabase.auth.setSession({
+              access_token: tokens.access_token,
+              refresh_token: tokens.refresh_token,
+            });
+            user = restored.data.user ?? user;
+            session = restored.data.session;
+          }
         }
-        user = signedIn.data.user;
-        session = signedIn.data.session;
+      }
+
+      if (!session && signedIn.error && !emailNotConfirmed(signedIn.error.message)) {
+        setPending(false);
+        setError(signedIn.error.message);
+        return;
       }
 
       if (user) {
@@ -162,6 +182,7 @@ export default function LoginPage() {
         return;
       }
 
+      persistAuthSession(session);
       router.replace("/feed");
       router.refresh();
       return;
@@ -172,12 +193,13 @@ export default function LoginPage() {
       password,
     });
 
-    if (signInError || !data.user) {
+    if (signInError || !data.user || !data.session) {
       setPending(false);
       setError(signInError?.message ?? "Could not sign in.");
       return;
     }
 
+    persistAuthSession(data.session);
     sessionStorage.setItem(AUTH_INTENT_KEY, "signin");
     const destination = await destinationForUser(supabase, data.user, "signin");
     sessionStorage.removeItem(AUTH_INTENT_KEY);

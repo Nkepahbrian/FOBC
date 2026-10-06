@@ -93,6 +93,14 @@ function ensureNotificationWatch() {
       .channel(`fobc-notifications-${userId}`)
       .on(
         "postgres_changes",
+        { event: "INSERT", schema: "public", table: "notifications", filter: `recipient_id=eq.${userId}` },
+        (payload) => {
+          ingestNotificationRow(payload.new as RemoteNotification);
+          syncNotifications(userId).catch(() => undefined);
+        }
+      )
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "notifications", filter: `recipient_id=eq.${userId}` },
         () => {
           syncNotifications(userId).catch(() => undefined);
@@ -183,6 +191,39 @@ export async function markNotificationsReadRemote(userId: string) {
 
 const kinds = new Set<NotificationKind>(["amen", "comment", "share", "adelphoi", "follow", "system"]);
 
+type RemoteNotification = {
+  id?: string;
+  actor_id?: string | null;
+  kind?: string | null;
+  type?: string | null;
+  title?: string | null;
+  body?: string | null;
+  message?: string | null;
+  href?: string | null;
+  created_at?: string;
+  read?: boolean;
+  is_read?: boolean;
+};
+
+function isFollowNotice(row: RemoteNotification) {
+  return row.type === "follow" || row.kind === "follow" || row.message === "started following you" || row.body === "started following you";
+}
+
+function ingestNotificationRow(row: RemoteNotification) {
+  if (!row.id) return;
+  const follow = isFollowNotice(row);
+  const kind = follow ? "follow" : kinds.has(row.kind as NotificationKind) ? (row.kind as NotificationKind) : "system";
+  recordNotification({
+    id: `db-${row.id}`,
+    kind,
+    title: follow ? "New Adelphos" : String(row.title || "Adelphoi"),
+    body: follow ? "started following you" : String(row.message || row.body || ""),
+    href: row.href || undefined,
+    createdAt: row.created_at,
+    is_read: asRead(row),
+  });
+}
+
 export async function notifyFollow(targetUserId: string) {
   if (!targetUserId || !getSupabaseEnv().isConfigured) return;
   const supabase = createClient();
@@ -193,6 +234,7 @@ export async function notifyFollow(targetUserId: string) {
   if (!actorId || actorId === targetUserId) return;
 
   const message = "started following you";
+  const title = "New Adelphos";
   const href = `/profile/${actorId}?from=notifications`;
   const attempts: Record<string, string | boolean>[] = [
     {
@@ -201,6 +243,7 @@ export async function notifyFollow(targetUserId: string) {
       actor_id: actorId,
       type: "follow",
       kind: "follow",
+      title,
       message,
       body: message,
       href,
@@ -297,12 +340,21 @@ export async function syncNotifications(userId: string) {
 
   try {
     const supabase = createClient();
-    const withFlag = await supabase
+    const rich = await supabase
       .from("notifications")
-      .select("id, actor_id, kind, body, href, created_at, read, is_read")
+      .select("id, actor_id, kind, type, title, body, message, href, created_at, read, is_read")
       .eq("recipient_id", userId)
       .order("created_at", { ascending: false })
       .limit(40);
+    const withFlag =
+      rich.error && /type|title|message|schema cache|column/i.test(rich.error.message)
+        ? await supabase
+            .from("notifications")
+            .select("id, actor_id, kind, body, href, created_at, read, is_read")
+            .eq("recipient_id", userId)
+            .order("created_at", { ascending: false })
+            .limit(40)
+        : rich;
     const stored =
       withFlag.error && /is_read/i.test(withFlag.error.message)
         ? await supabase
@@ -316,15 +368,17 @@ export async function syncNotifications(userId: string) {
     if (!stored.error) {
       const names = await namesFor((stored.data ?? []).map((row) => String(row.actor_id || "")));
       for (const row of stored.data ?? []) {
-        const kind = kinds.has(row.kind as NotificationKind) ? (row.kind as NotificationKind) : "system";
+        const notice = row as RemoteNotification;
+        const follow = isFollowNotice(notice);
+        const kind = follow ? "follow" : kinds.has(notice.kind as NotificationKind) ? (notice.kind as NotificationKind) : "system";
         recordNotification({
-          id: `db-${row.id}`,
+          id: `db-${notice.id}`,
           kind,
-          title: names.get(String(row.actor_id)) || "Adelphoi",
-          body: String(row.body || ""),
-          href: row.href || undefined,
-          createdAt: row.created_at,
-          is_read: asRead(row as { is_read?: boolean; read?: boolean }),
+          title: follow ? "New Adelphos" : names.get(String(notice.actor_id)) || "Adelphoi",
+          body: follow ? "started following you" : String(notice.message || notice.body || ""),
+          href: notice.href || undefined,
+          createdAt: notice.created_at,
+          is_read: asRead(notice),
         });
       }
       return;
@@ -407,7 +461,7 @@ export async function syncNotifications(userId: string) {
         recordNotification({
           id: `adelphoi-in-${actorId}`,
           kind: "follow",
-          title: names.get(actorId) || "Adelphoi",
+          title: "New Adelphos",
           body: "started following you",
           href: `/profile/${actorId}?from=notifications`,
           createdAt: row.created_at,

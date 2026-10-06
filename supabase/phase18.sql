@@ -3,6 +3,7 @@
 
 alter table public.notifications add column if not exists user_id uuid;
 alter table public.notifications add column if not exists type text;
+alter table public.notifications add column if not exists title text;
 alter table public.notifications add column if not exists message text;
 
 do $$

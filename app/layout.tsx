@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
+import { AuthSession } from "@/components/AuthSession";
 import "./globals.css";
 
 const geistSans = localFont({
@@ -51,6 +52,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        <AuthSession />
         {children}
       </body>
     </html>

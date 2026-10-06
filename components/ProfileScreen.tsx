@@ -297,35 +297,43 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
     load(() => cancelled).catch(() => {
       if (!cancelled) setNotice("This profile could not be loaded.");
     });
-    const refresh = () => setRefreshKey((current) => current + 1);
+    const refresh = () => {
+      if (document.visibilityState === "hidden") return;
+      setRefreshKey((current) => current + 1);
+    };
     window.addEventListener("fobc-post-shared", refresh);
     window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
     return () => {
       cancelled = true;
       window.removeEventListener("fobc-post-shared", refresh);
       window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
     };
   }, [load, refreshKey, userId]);
 
   useEffect(() => {
     if (!getSupabaseEnv().isConfigured) return;
     const supabase = createClient();
+    const filter = `following_id=eq.${userId}`;
+    async function recount() {
+      const result = await supabase.from("follows").select("*", { count: "exact", head: true }).eq("following_id", userId);
+      if (result.error || result.count == null) return;
+      const snapshot = getAdelphoiSnapshot();
+      setProfile((current) => {
+        if (!current) return current;
+        const viewerFollows = snapshot.ready && snapshot.me ? snapshot.ids.has(userId) : current.viewerFollows;
+        return { ...current, followers: result.count ?? current.followers, viewerFollows };
+      });
+    }
     const channel = supabase
       .channel(`profile-follows-${userId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "follows", filter: `following_id=eq.${userId}` },
-        async () => {
-          const result = await supabase.from("follows").select("*", { count: "exact", head: true }).eq("following_id", userId);
-          if (result.error || result.count == null) return;
-          const snapshot = getAdelphoiSnapshot();
-          setProfile((current) => {
-            if (!current) return current;
-            const viewerFollows = snapshot.ready && snapshot.me ? snapshot.ids.has(userId) : current.viewerFollows;
-            return { ...current, followers: result.count ?? current.followers, viewerFollows };
-          });
-        }
-      )
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "follows", filter }, () => {
+        recount().catch((error) => console.error("Could not refresh Adelphoi count:", error));
+      })
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "follows", filter }, () => {
+        recount().catch((error) => console.error("Could not refresh Adelphoi count:", error));
+      })
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
@@ -478,7 +486,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
             <dt className="text-lg font-semibold">{profile.amens}</dt>
             <dd className="text-xs text-zinc-400">Amens</dd>
           </div>
-          <div className="flex flex-col items-center">
+          <div className="flex flex-col items-center" aria-label={followerCount === 1 ? "1 Adelphos" : `${followerCount} Adelphoi`}>
             <dt className="text-lg font-semibold">{followerCount}</dt>
             <dd className="text-xs text-zinc-400">{adelphoiWord(followerCount)}</dd>
           </div>
