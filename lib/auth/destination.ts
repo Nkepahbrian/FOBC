@@ -1,5 +1,7 @@
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 
+const DEFAULT_BIO = "Add a short bio so the community knows your story.";
+
 function metadataText(user: User, key: string) {
   const value = user.user_metadata?.[key];
   return typeof value === "string" ? value.trim() : "";
@@ -14,16 +16,17 @@ export async function destinationForUser(
   const phoneNumber = metadataText(user, "phone_number");
 
   try {
-    if (fullName || phoneNumber) {
-      await supabase.from("profiles").upsert(
-        {
-          id: user.id,
-          ...(fullName ? { full_name: fullName } : {}),
-          ...(phoneNumber ? { phone_number: phoneNumber } : {}),
-        },
-        { onConflict: "id" }
-      );
-    }
+    const existing = await supabase.from("profiles").select("bio").eq("id", user.id).maybeSingle();
+    const bio = existing.data?.bio?.trim() ? existing.data.bio : DEFAULT_BIO;
+    await supabase.from("profiles").upsert(
+      {
+        id: user.id,
+        ...(fullName ? { full_name: fullName } : {}),
+        ...(phoneNumber ? { phone_number: phoneNumber } : {}),
+        bio,
+      },
+      { onConflict: "id" }
+    );
   } catch {
     return "/feed";
   }

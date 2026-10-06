@@ -32,21 +32,28 @@ function emailNotConfirmed(message: string | undefined) {
   return Boolean(message && /email not confirmed|not confirmed|confirm your email/i.test(message));
 }
 
-async function saveDisplayName(
+const DEFAULT_BIO = "Add a short bio so the community knows your story.";
+
+async function ensureProfile(
   supabase: ReturnType<typeof createClient>,
   userId: string,
   name: string,
   phoneNumber: string
 ) {
-  const named = await supabase.from("profiles").update({ full_name: name }).eq("id", userId);
-  if (named.error) {
-    const created = await supabase.from("profiles").upsert({ id: userId, full_name: name }, { onConflict: "id" });
-    if (created.error) console.error("Could not update profile display name:", created.error);
+  const existing = await supabase.from("profiles").select("bio").eq("id", userId).maybeSingle();
+  const bio = existing.data?.bio?.trim() ? existing.data.bio : DEFAULT_BIO;
+  const saved = await supabase.from("profiles").upsert(
+    { id: userId, full_name: name, bio },
+    { onConflict: "id" }
+  );
+  if (saved.error) {
+    const updated = await supabase.from("profiles").update({ full_name: name, bio }).eq("id", userId);
+    if (updated.error) console.error("Could not save profile:", updated.error);
   }
 
   if (phoneNumber) {
     const phone = await supabase.from("profiles").update({ phone_number: phoneNumber }).eq("id", userId);
-    if (phone.error) console.error("Could not update profile phone number:", phone.error);
+    if (phone.error) console.error("Could not save phone number:", phone.error);
   }
 
   const metadata = await supabase.auth.updateUser({
@@ -139,52 +146,67 @@ export default function LoginPage() {
         return;
       }
 
-      const signedIn = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+      let signedIn = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
       let user = signedIn.data.user ?? data.user;
-      let session = signedIn.data.session ?? data.session;
+      let session = signedIn.data.session;
 
-      if (!session && emailNotConfirmed(signedIn.error?.message) && data.user?.id) {
+      const invalidPassword = Boolean(
+        signedIn.error && /invalid login credentials|invalid credentials/i.test(signedIn.error.message) && !emailNotConfirmed(signedIn.error.message)
+      );
+
+      if (!session && !invalidPassword) {
         const activated = await fetch("/api/auth/activate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: cleanEmail, password, userId: data.user.id }),
+          body: JSON.stringify({
+            email: cleanEmail,
+            password,
+            userId: data.user?.id ?? "",
+            fullName: name,
+            phoneNumber,
+          }),
         });
         if (activated.ok) {
-          const tokens = (await activated.json()) as { access_token?: string; refresh_token?: string };
-          if (tokens.access_token && tokens.refresh_token) {
-            const restored = await supabase.auth.setSession({
-              access_token: tokens.access_token,
-              refresh_token: tokens.refresh_token,
-            });
-            user = restored.data.user ?? user;
-            session = restored.data.session;
+          signedIn = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+          user = signedIn.data.user ?? user;
+          session = signedIn.data.session;
+          if (!session) {
+            const tokens = (await activated.json()) as { access_token?: string; refresh_token?: string };
+            if (tokens.access_token && tokens.refresh_token) {
+              const restored = await supabase.auth.setSession({
+                access_token: tokens.access_token,
+                refresh_token: tokens.refresh_token,
+              });
+              user = restored.data.user ?? user;
+              session = restored.data.session;
+            }
           }
         }
       }
 
-      if (!session && signedIn.error && !emailNotConfirmed(signedIn.error.message)) {
-        setPending(false);
-        setError(signedIn.error.message);
-        return;
+      if (!session && data.session) {
+        const restored = await supabase.auth.setSession({
+          access_token: data.session.access_token,
+          refresh_token: data.session.refresh_token,
+        });
+        user = restored.data.user ?? data.user ?? user;
+        session = restored.data.session ?? data.session;
       }
 
-      if (user) {
+      if (session && user) {
         try {
-          await saveDisplayName(supabase, user.id, name, phoneNumber);
+          await ensureProfile(supabase, user.id, name, phoneNumber);
         } catch (profileError) {
-          console.error("Could not update profile display name:", profileError);
+          console.error("Could not save profile:", profileError);
         }
-      }
-
-      if (!session) {
-        setPending(false);
-        setError("The account was created, but the session did not start.");
+        persistAuthSession(session);
+        router.replace("/feed");
+        router.refresh();
         return;
       }
 
-      persistAuthSession(session);
-      router.replace("/feed");
-      router.refresh();
+      setPending(false);
+      setError(signedIn.error?.message ?? signUpError?.message ?? "Could not sign in.");
       return;
     }
 
