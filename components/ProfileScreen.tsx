@@ -9,7 +9,7 @@ import { Avatar } from "@/components/Avatar";
 import { Wordmark } from "@/components/Logo";
 import { readStale, writeCache } from "@/lib/cache/swr";
 import { readPackedAudio, readPackedThought } from "@/lib/feed/api";
-import { getAdelphoiSnapshot, useAdelphoi } from "@/lib/community/adelphoi";
+import { getAdelphoiSnapshot, mergeFollowerCount, useAdelphoi } from "@/lib/community/adelphoi";
 import { recordNotification } from "@/lib/notifications/store";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 import { cardStyleById } from "@/lib/styles/cards";
@@ -224,12 +224,14 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
   const [refreshKey, setRefreshKey] = useState(0);
   const [editingBio, setEditingBio] = useState(false);
   const [bioDraft, setBioDraft] = useState("");
+  const followerStamp = useRef(0);
 
   useEffect(() => {
     setFromNotifications(new URLSearchParams(window.location.search).get("from") === "notifications");
   }, []);
 
   const load = useCallback(async (cancelled: () => boolean) => {
+    const stamp = followerStamp.current;
     const supabase = createClient();
     const [profileResult, postsResult, followResult] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
@@ -255,11 +257,10 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
     const viewerFollows = Boolean(viewer && followRows.some((row) => String(row.follower_id) === viewer.id));
     const exactFollowers = await supabase.rpc("adelphos_count", { target_id: userId });
     const followers =
-      !exactFollowers.error && typeof exactFollowers.data === "number"
-        ? exactFollowers.data
-        : followResult.error
-          ? followRows.length
-          : followResult.count ?? followRows.length;
+      mergeFollowerCount(
+        !exactFollowers.error && typeof exactFollowers.data === "number" ? exactFollowers.data : null,
+        followResult.error ? null : followResult.count ?? followRows.length
+      ) ?? 0;
 
     if (cancelled()) return;
     const model: ProfileModel = {
@@ -293,7 +294,10 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
         }),
       };
     writeCache(`fobc-profile-${userId}`, model);
-    setProfile(model);
+    setProfile((current) => {
+      if (stamp !== followerStamp.current && current) return { ...model, followers: current.followers };
+      return model;
+    });
   }, [isOwn, userId]);
 
   useEffect(() => {
@@ -310,6 +314,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
     function onAdelphoi(event: Event) {
       const detail = (event as CustomEvent<{ userId?: string; followers?: number }>).detail;
       if (!detail || detail.userId !== userId || typeof detail.followers !== "number") return;
+      followerStamp.current += 1;
       setProfile((current) => (current ? { ...current, followers: detail.followers ?? current.followers } : current));
     }
     window.addEventListener("fobc-post-shared", refresh);
@@ -330,18 +335,20 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
     const supabase = createClient();
     const filter = `following_id=eq.${userId}`;
     async function recount() {
+      const stamp = followerStamp.current;
       const exact = await supabase.rpc("adelphos_count", { target_id: userId });
-      const result =
-        exact.error || typeof exact.data !== "number"
-          ? await supabase.from("follows").select("*", { count: "exact", head: true }).eq("following_id", userId)
-          : null;
-      const count = typeof exact.data === "number" ? exact.data : result && !result.error ? result.count : null;
+      const listed = await supabase.from("follows").select("follower_id", { count: "exact", head: true }).eq("following_id", userId);
+      const count = mergeFollowerCount(
+        !exact.error && typeof exact.data === "number" ? exact.data : null,
+        listed.error ? null : listed.count ?? 0
+      );
       if (count == null) return;
       const snapshot = getAdelphoiSnapshot();
       setProfile((current) => {
         if (!current) return current;
         const viewerFollows = snapshot.ready && snapshot.me ? snapshot.ids.has(userId) : current.viewerFollows;
-        const next = { ...current, followers: count, viewerFollows };
+        const followers = stamp !== followerStamp.current ? Math.max(current.followers, count) : count;
+        const next = { ...current, followers, viewerFollows };
         writeCache(`fobc-profile-${userId}`, next);
         return next;
       });
@@ -563,6 +570,11 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
             name={profile.fullName}
             variant="prominent"
             followBack={fromNotifications}
+            onChange={(delta) => {
+              setProfile((current) =>
+                current ? { ...current, followers: Math.max(0, current.followers + delta) } : current
+              );
+            }}
           />
         </div>
       ) : null}

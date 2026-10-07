@@ -11,6 +11,7 @@ import { ThoughtCard } from "@/components/ThoughtCard";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 import { markConversationRead } from "@/lib/inbox/unread";
+import { notifyRecipient } from "@/lib/notifications/store";
 import { loadScriptures, saveScripture, type ScriptureNote } from "@/lib/scripture/api";
 import { cardStyleById } from "@/lib/styles/cards";
 
@@ -326,6 +327,12 @@ export function ChatScreen() {
     setMessages((current) => current.map((message) => (message.id === optimistic.id ? (data as ChatMessage) : message)));
     setNotice(null);
     loadThreads(me);
+    await notifyRecipient({
+      recipientId: active.id,
+      kind: "system",
+      body: `Sent you a message: ${text.slice(0, 80)}`,
+      href: `/chat?with=${me}`,
+    });
   }
 
   if (active) {

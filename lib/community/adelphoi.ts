@@ -100,15 +100,14 @@ async function readFollows() {
     return;
   }
 
-  const saved = localFollowIds(me);
   const result = await supabase.from("follows").select("following_id").eq("follower_id", me);
   if (result.error) {
     console.error("Could not load follows from Supabase. Keeping saved follows.", result.error);
-    publish({ me, ids: saved, ready: true });
+    publish({ me, ids: localFollowIds(me), ready: true });
     return;
   }
 
-  const ids = new Set<string>(saved);
+  const ids = new Set<string>();
   for (const row of result.data ?? []) ids.add(String(row.following_id));
   publish({ me, ids, ready: true });
 }
@@ -141,6 +140,63 @@ function permissionBlocked(error: { message: string; code?: string }) {
   return /row-level security|permission denied|42501|policy/i.test(`${error.code ?? ""} ${error.message}`);
 }
 
+async function followerRow(supabase: ReturnType<typeof createClient>, me: string, targetId: string) {
+  const row = await supabase.from("follows").select("follower_id").eq("follower_id", me).eq("following_id", targetId).maybeSingle();
+  return !row.error && Boolean(row.data);
+}
+
+export function mergeFollowerCount(rpcCount: number | null, listedCount: number | null) {
+  if (rpcCount == null && listedCount == null) return null;
+  return Math.max(rpcCount ?? 0, listedCount ?? 0);
+}
+
+async function followerTotal(supabase: ReturnType<typeof createClient>, targetId: string) {
+  const exact = await supabase.rpc("adelphos_count", { target_id: targetId });
+  const listed = await supabase.from("follows").select("follower_id", { count: "exact", head: true }).eq("following_id", targetId);
+  return mergeFollowerCount(
+    !exact.error && typeof exact.data === "number" ? exact.data : null,
+    listed.error ? null : listed.count ?? 0
+  );
+}
+
+async function saveFollow(supabase: ReturnType<typeof createClient>, me: string, targetId: string) {
+  await supabase.from("profiles").upsert({ id: me, full_name: "FOBC member" }, { onConflict: "id", ignoreDuplicates: true });
+  const shared = await supabase.rpc("follow_adelphos", { target_id: targetId });
+  let saved = await followerRow(supabase, me, targetId);
+  if (!saved && !shared.error && typeof shared.data === "number" && shared.data > 0) {
+    const total = await followerTotal(supabase, targetId);
+    return { ok: true, count: total ?? shared.data, warning: null };
+  }
+  if (!saved) {
+    const inserted = await supabase.from("follows").insert({ follower_id: me, following_id: targetId });
+    const duplicate = Boolean(inserted.error && /duplicate key|unique constraint|23505/i.test(inserted.error.message));
+    if (inserted.error && !duplicate) {
+      return { ok: false, count: null, warning: logFollowError("upsert", inserted.error) };
+    }
+    saved = duplicate || (await followerRow(supabase, me, targetId));
+  }
+  if (!saved) {
+    const detail = shared.error ? logFollowError("upsert", shared.error) : "Follow did not save. Try again.";
+    return { ok: false, count: null, warning: detail };
+  }
+  return { ok: true, count: await followerTotal(supabase, targetId), warning: null };
+}
+
+async function removeFollow(supabase: ReturnType<typeof createClient>, me: string, targetId: string) {
+  const shared = await supabase.rpc("unfollow_adelphos", { target_id: targetId });
+  let gone = !(await followerRow(supabase, me, targetId));
+  if (!gone) {
+    const removed = await supabase.from("follows").delete().eq("follower_id", me).eq("following_id", targetId);
+    if (removed.error) return { ok: false, count: null, warning: logFollowError("delete", removed.error) };
+    gone = !(await followerRow(supabase, me, targetId));
+  }
+  if (!gone) {
+    const detail = shared.error ? logFollowError("delete", shared.error) : "Could not update follow. Try again.";
+    return { ok: false, count: null, warning: detail };
+  }
+  return { ok: true, count: await followerTotal(supabase, targetId), warning: null };
+}
+
 function logFollowError(action: "upsert" | "delete", error: { message: string; code?: string }) {
   if (permissionBlocked(error)) {
     console.error(
@@ -170,44 +226,19 @@ export async function toggleAdelphoi(
     const next = new Set(ids);
 
     if (!shouldFollow) {
+      const removed = await removeFollow(supabase, me, targetId);
+      if (!removed.ok) return { status: null, warning: removed.warning };
       next.delete(targetId);
       publish({ me, ids: next, ready: true });
-      const shared = await supabase.rpc("unfollow_adelphos", { target_id: targetId });
-      if (!shared.error && typeof shared.data === "number") {
-        announceAdelphoi(targetId, shared.data);
-        return { status: "unfollowed", warning: null };
-      }
-      const { error } = await supabase.from("follows").delete().eq("follower_id", me).eq("following_id", targetId);
-      if (error) logFollowError("delete", error);
+      if (typeof removed.count === "number") announceAdelphoi(targetId, removed.count);
       return { status: "unfollowed", warning: null };
     }
 
+    const saved = await saveFollow(supabase, me, targetId);
+    if (!saved.ok) return { status: null, warning: saved.warning };
     next.add(targetId);
     publish({ me, ids: next, ready: true });
-    const shared = await supabase.rpc("follow_adelphos", { target_id: targetId });
-    if (!shared.error && typeof shared.data === "number") {
-      announceAdelphoi(targetId, shared.data);
-      try {
-        await notifyFollow(targetId);
-      } catch (notifyError) {
-        console.error("Follow saved, but the notification could not be sent:", notifyError);
-      }
-      return { status: "followed", warning: null };
-    }
-    let { error } = await supabase.from("follows").upsert(
-      { follower_id: me, following_id: targetId },
-      { onConflict: "follower_id,following_id", ignoreDuplicates: true }
-    );
-    if (error && /on conflict|42P10|no unique/i.test(error.message)) {
-      const inserted = await supabase.from("follows").insert({ follower_id: me, following_id: targetId });
-      error = inserted.error && /duplicate key|unique constraint|23505/i.test(inserted.error.message) ? null : inserted.error;
-    }
-    if (error && /duplicate key|unique constraint|23505/i.test(error.message)) error = null;
-    if (error) {
-      logFollowError("upsert", error);
-      return { status: "followed", warning: null };
-    }
-
+    if (typeof saved.count === "number") announceAdelphoi(targetId, saved.count);
     try {
       await notifyFollow(targetId);
     } catch (notifyError) {
@@ -216,14 +247,6 @@ export async function toggleAdelphoi(
     return { status: "followed", warning: null };
   } catch (error) {
     console.error("Follow action failed:", error);
-    const { me, ids } = snapshot;
-    if (me && follow !== undefined && me !== targetId) {
-      const next = new Set(ids);
-      if (follow) next.add(targetId);
-      else next.delete(targetId);
-      publish({ me, ids: next, ready: true });
-      return { status: follow ? "followed" : "unfollowed", warning: null };
-    }
     return { status: null, warning: "Could not update follow. Try again." };
   }
 }

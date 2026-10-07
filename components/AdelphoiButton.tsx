@@ -27,6 +27,7 @@ export function AdelphoiButton({
   const label = connected ? "Following" : followBack ? "Follow back Adelphos" : "Follow Adelphos";
 
   return (
+    <div className={variant === "prominent" ? "w-full" : "inline-flex flex-col items-end"}>
     <button
       type="button"
       disabled={pending}
@@ -85,11 +86,12 @@ export function AdelphoiButton({
       )}
     >
       {label}
-      {warning ? (
-        <span role="alert" className="sr-only">
-          {warning}
-        </span>
-      ) : null}
     </button>
+      {warning ? (
+        <p role="alert" className="mt-1 text-center text-xs text-red-300">
+          {warning}
+        </p>
+      ) : null}
+    </div>
   );
 }

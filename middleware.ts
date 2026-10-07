@@ -11,7 +11,12 @@ function isProtectedPath(pathname: string) {
 }
 
 export async function middleware(request: NextRequest) {
-  if (request.nextUrl.pathname.startsWith("/auth/callback")) {
+  if (
+    request.nextUrl.pathname.startsWith("/auth/callback") ||
+    request.nextUrl.pathname === "/sw.js" ||
+    request.nextUrl.pathname.startsWith("/sounds/") ||
+    request.nextUrl.pathname.startsWith("/api/push")
+  ) {
     return NextResponse.next({ request });
   }
 

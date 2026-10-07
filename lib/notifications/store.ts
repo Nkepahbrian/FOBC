@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useSyncExternalStore } from "react";
+import { deliverPhoneAlert } from "@/lib/push/alerts";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseEnv } from "@/lib/supabase/env";
 
@@ -248,6 +249,7 @@ export async function notifyFollow(targetUserId: string) {
     .select("id")
     .eq("recipient_id", targetUserId)
     .eq("actor_id", actorId)
+    .in("kind", ["follow", "adelphoi"])
     .gte("created_at", new Date(Date.now() - 120000).toISOString())
     .limit(1);
   if (!recent.error && (recent.data ?? []).length > 0) return;
@@ -301,7 +303,16 @@ export async function notifyFollow(targetUserId: string) {
 
   for (const payload of attempts) {
     const inserted = await supabase.from("notifications").insert(payload);
-    if (!inserted.error || missingRelation(inserted.error.message)) return;
+    if (!inserted.error || missingRelation(inserted.error.message)) {
+      await deliverPhoneAlert({
+        recipientId: targetUserId,
+        title: message,
+        body: "Open their profile",
+        url: href,
+        tag: `follow-${actorId}`,
+      });
+      return;
+    }
   }
   console.error("Could not save follow notification.");
 }
@@ -319,12 +330,15 @@ export async function notifyRecipient(input: {
   } = await supabase.auth.getUser();
   const actorId = user?.id ?? null;
   if (!actorId || actorId === input.recipientId) return;
+  const profile = await supabase.from("profiles").select("full_name").eq("id", actorId).maybeSingle();
+  const name = profile.data?.full_name?.trim() || "Someone";
+  const body = input.body.startsWith("Adelphos ") ? input.body : `Adelphos ${name} ${input.body.charAt(0).toLowerCase()}${input.body.slice(1)}`;
 
   let inserted = await supabase.from("notifications").insert({
     recipient_id: input.recipientId,
     actor_id: actorId,
     kind: input.kind,
-    body: input.body,
+    body,
     href: input.href,
     read: false,
     is_read: false,
@@ -334,13 +348,22 @@ export async function notifyRecipient(input: {
       recipient_id: input.recipientId,
       actor_id: actorId,
       kind: input.kind,
-      body: input.body,
+      body,
       href: input.href,
       read: false,
     });
   }
 
-  if (!inserted.error || missingRelation(inserted.error.message)) return;
+  if (!inserted.error || missingRelation(inserted.error.message)) {
+    await deliverPhoneAlert({
+      recipientId: input.recipientId,
+      title: body,
+      body: "Open FOBC",
+      url: input.href,
+      tag: `${input.kind}-${actorId}-${input.href}`,
+    });
+    return;
+  }
   console.error("Could not save notification:", inserted.error);
 }
 
