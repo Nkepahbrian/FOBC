@@ -43,13 +43,11 @@ export function CommentDrawer({ post, comments, viewerId, onClose, onComment, on
   }, [post?.id]);
 
   useEffect(() => {
-    setLikes((previous) => {
-      const next: Record<string, { count: number; liked: boolean }> = {};
-      for (const comment of commentsRef.current) {
-        next[comment.id] = previous[comment.id] ?? readCommentLike(comment.id) ?? { count: comment.amenCount, liked: comment.likedByMe };
-      }
-      return next;
-    });
+    const next: Record<string, { count: number; liked: boolean }> = {};
+    for (const comment of commentsRef.current) {
+      next[comment.id] = { count: comment.amenCount, liked: comment.likedByMe };
+    }
+    setLikes(next);
   }, [likeKey]);
 
   if (!post) return null;
@@ -90,10 +88,14 @@ export function CommentDrawer({ post, comments, viewerId, onClose, onComment, on
     rememberCommentLike(comment.id, next);
     setLikes((previous) => ({ ...previous, [comment.id]: next }));
     const saved = await toggleCommentAmen(comment.id, current.liked, next.count);
-    if (!saved) {
+    if (saved == null) {
       rememberCommentLike(comment.id, current);
       setLikes((previous) => ({ ...previous, [comment.id]: current }));
+      return;
     }
+    const confirmed = { liked, count: saved };
+    rememberCommentLike(comment.id, confirmed);
+    setLikes((previous) => ({ ...previous, [comment.id]: confirmed }));
   }
 
   function CommentRow({ comment }: { comment: FeedComment }) {

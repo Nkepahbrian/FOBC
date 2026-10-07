@@ -224,6 +224,12 @@ function mergedCommentLike(commentId: string, serverCount: number, serverLiked: 
   return state;
 }
 
+function sharedCommentLike(commentId: string, serverCount: number, serverLiked: boolean) {
+  const state = { count: Math.max(0, serverCount), liked: serverLiked };
+  rememberCommentLike(commentId, state);
+  return state;
+}
+
 function emptyFeed(notice: string, events: LiveEvent[] = []): CommunitySnapshot {
   return {
     posts: [],
@@ -625,11 +631,12 @@ export async function loadComments(postId: string): Promise<FeedComment[]> {
       }>;
       const ids = Array.from(new Set(rows.map((row) => row.user_id).filter((id): id is string => Boolean(id))));
       const commentIds = rows.map((row) => row.id);
+      const sharedCounts = await sharedAmenCounts(supabase, commentIds);
       const [profiles, likes] = await Promise.all([
         ids.length ? supabase.from("profiles").select("id, full_name, avatar_url").in("id", ids) : Promise.resolve({ data: [] }),
-        commentIds.length
-          ? supabase.from("comment_likes").select("comment_id, user_id").in("comment_id", commentIds)
-          : Promise.resolve({ data: [] as { comment_id: string; user_id: string }[], error: null }),
+        sharedCounts || commentIds.length === 0
+          ? Promise.resolve({ data: [] as { comment_id: string; user_id: string }[], error: null })
+          : supabase.from("comment_likes").select("comment_id, user_id").in("comment_id", commentIds),
       ]);
       const likeQueryMissing = Boolean(likes.error && missingRelation(likes.error.message));
       if (likes.error) {
@@ -641,14 +648,19 @@ export async function loadComments(postId: string): Promise<FeedComment[]> {
       }
       const byId = new Map((profiles.data ?? []).map((profile) => [profile.id, profile]));
       const likeRows = likes.error ? [] : (likes.data ?? []);
-      const storedCounts = await commentLikeCounts(supabase, commentIds);
+      const storedCounts = sharedCounts ? new Map<string, number>() : await commentLikeCounts(supabase, commentIds);
       return rows.map((row) => {
         const profile = byId.get(row.user_id);
         const reply = readReply(row.content, "parent_id" in row ? (row.parent_id as string | null) : null);
         const amenRows = likeRows.filter((like) => like.comment_id === row.id);
         const serverCount = likes.error ? 0 : amenRows.length;
         const serverLiked = !likes.error && Boolean(user && amenRows.some((like) => like.user_id === user.id));
-        const merged = mergedCommentLike(row.id, serverCount, serverLiked, storedCounts.get(row.id) ?? 0);
+        const shared = sharedCounts?.get(row.id);
+        const merged = sharedCounts
+          ? sharedCommentLike(row.id, shared?.count ?? 0, shared?.liked ?? false)
+          : likes.error
+            ? mergedCommentLike(row.id, serverCount, serverLiked, storedCounts.get(row.id) ?? 0)
+            : sharedCommentLike(row.id, serverCount, serverLiked);
         return {
           id: row.id,
           postId: row.post_id,
@@ -668,6 +680,18 @@ export async function loadComments(postId: string): Promise<FeedComment[]> {
   } catch {
     return [];
   }
+}
+
+async function sharedAmenCounts(supabase: ReturnType<typeof createClient>, commentIds: string[]) {
+  if (commentIds.length === 0) return new Map<string, { count: number; liked: boolean }>();
+  const counted = await supabase.rpc("comment_amen_counts", { comment_ids: commentIds });
+  if (counted.error || !Array.isArray(counted.data)) return null;
+  const counts = new Map<string, { count: number; liked: boolean }>();
+  for (const row of counted.data as Array<{ comment_id?: string; amen_count?: number; liked_by_me?: boolean }>) {
+    if (!row.comment_id) continue;
+    counts.set(String(row.comment_id), { count: Number(row.amen_count) || 0, liked: Boolean(row.liked_by_me) });
+  }
+  return counts;
 }
 
 async function commentLikeCounts(supabase: ReturnType<typeof createClient>, commentIds: string[]) {
@@ -708,8 +732,16 @@ async function writeCommentLikeCount(supabase: ReturnType<typeof createClient>, 
 
 export async function toggleCommentAmen(commentId: string, liked: boolean, nextCount = 0) {
   const { supabase, userId } = await currentUserId();
-  if (!userId) return false;
+  if (!userId) return null;
   try {
+    const shared = await supabase.rpc("toggle_comment_amen", { target_comment: commentId });
+    if (!shared.error && typeof shared.data === "number") {
+      rememberCommentLike(commentId, { count: shared.data, liked: !liked });
+      return shared.data;
+    }
+    if (shared.error && !/function|schema cache|does not exist|PGRST202/i.test(shared.error.message)) {
+      console.error("Shared comment amen failed:", shared.error);
+    }
     const result = liked
       ? await supabase.from("comment_likes").delete().eq("comment_id", commentId).eq("user_id", userId)
       : await supabase.from("comment_likes").upsert(
@@ -735,10 +767,10 @@ export async function toggleCommentAmen(commentId: string, liked: boolean, nextC
       }
     }
     await writeCommentLikeCount(supabase, commentId, nextCount);
-    return true;
+    return nextCount;
   } catch (error) {
     console.error("Comment like failed:", error);
-    return true;
+    return nextCount;
   }
 }
 

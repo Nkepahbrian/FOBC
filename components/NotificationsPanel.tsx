@@ -56,10 +56,12 @@ export function NotificationsPanel({ active = true }: { active?: boolean }) {
         const content = (
           <>
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#EAB308]">
-              {item.kind === "follow" || item.body === "started following you" ? "Follow" : kindLabel[item.kind]}
+              {item.kind === "follow" || /following you/i.test(item.body) ? "Follow" : kindLabel[item.kind]}
             </p>
-            <p className="mt-1 text-sm font-semibold text-white">{item.title}</p>
-            <p className="mt-0.5 text-sm leading-5 text-zinc-300">{item.body}</p>
+            <p className="mt-1 text-sm font-semibold text-white">{item.kind === "follow" ? item.body : item.title}</p>
+            {item.kind === "follow" || item.body === item.title ? null : (
+              <p className="mt-0.5 text-sm leading-5 text-zinc-300">{item.body}</p>
+            )}
           </>
         );
         const className = cn("block rounded-2xl px-3 py-3 text-left", item.is_read ? "bg-transparent" : "bg-blue-500/15");

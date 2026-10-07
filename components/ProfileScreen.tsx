@@ -253,7 +253,13 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
       data: { user: viewer },
     } = await supabase.auth.getUser();
     const viewerFollows = Boolean(viewer && followRows.some((row) => String(row.follower_id) === viewer.id));
-    const followers = followResult.error ? followRows.length : followResult.count ?? followRows.length;
+    const exactFollowers = await supabase.rpc("adelphos_count", { target_id: userId });
+    const followers =
+      !exactFollowers.error && typeof exactFollowers.data === "number"
+        ? exactFollowers.data
+        : followResult.error
+          ? followRows.length
+          : followResult.count ?? followRows.length;
 
     if (cancelled()) return;
     const model: ProfileModel = {
@@ -301,12 +307,19 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
       if (document.visibilityState === "hidden") return;
       setRefreshKey((current) => current + 1);
     };
+    function onAdelphoi(event: Event) {
+      const detail = (event as CustomEvent<{ userId?: string; followers?: number }>).detail;
+      if (!detail || detail.userId !== userId || typeof detail.followers !== "number") return;
+      setProfile((current) => (current ? { ...current, followers: detail.followers ?? current.followers } : current));
+    }
     window.addEventListener("fobc-post-shared", refresh);
+    window.addEventListener("fobc-adelphoi", onAdelphoi);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {
       cancelled = true;
       window.removeEventListener("fobc-post-shared", refresh);
+      window.removeEventListener("fobc-adelphoi", onAdelphoi);
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
@@ -317,13 +330,20 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
     const supabase = createClient();
     const filter = `following_id=eq.${userId}`;
     async function recount() {
-      const result = await supabase.from("follows").select("*", { count: "exact", head: true }).eq("following_id", userId);
-      if (result.error || result.count == null) return;
+      const exact = await supabase.rpc("adelphos_count", { target_id: userId });
+      const result =
+        exact.error || typeof exact.data !== "number"
+          ? await supabase.from("follows").select("*", { count: "exact", head: true }).eq("following_id", userId)
+          : null;
+      const count = typeof exact.data === "number" ? exact.data : result && !result.error ? result.count : null;
+      if (count == null) return;
       const snapshot = getAdelphoiSnapshot();
       setProfile((current) => {
         if (!current) return current;
         const viewerFollows = snapshot.ready && snapshot.me ? snapshot.ids.has(userId) : current.viewerFollows;
-        return { ...current, followers: result.count ?? current.followers, viewerFollows };
+        const next = { ...current, followers: count, viewerFollows };
+        writeCache(`fobc-profile-${userId}`, next);
+        return next;
       });
     }
     const channel = supabase
@@ -335,7 +355,11 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
         recount().catch((error) => console.error("Could not refresh Adelphoi count:", error));
       })
       .subscribe();
+    const timer = window.setInterval(() => {
+      recount().catch((error) => console.error("Could not refresh Adelphoi count:", error));
+    }, 8000);
     return () => {
+      window.clearInterval(timer);
       supabase.removeChannel(channel);
     };
   }, [userId]);
@@ -441,11 +465,7 @@ export function ProfileScreen({ userId, isOwn }: { userId: string; isOwn: boolea
     );
   }
 
-  const viewerFollows = adelphoi.ready && adelphoi.me ? adelphoi.ids.has(profile.id) : Boolean(profile.viewerFollows);
-  const followerCount = Math.max(
-    0,
-    profile.followers + (viewerFollows === Boolean(profile.viewerFollows) ? 0 : viewerFollows ? 1 : -1)
-  );
+  const followerCount = Math.max(0, profile.followers);
 
   return (
     <section className="fobc-safe-clear px-4 text-white">

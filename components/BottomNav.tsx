@@ -50,8 +50,8 @@ export function BottomNav() {
                 >
                   <Icon className={accent ? "h-7 w-7" : "h-5 w-5"} strokeWidth={accent ? 2.4 : 2} />
                   {item.href === "/chat" && unreadMessages > 0 ? (
-                    <span className="absolute -right-2 -top-2 z-10 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#EAB308] px-1 text-[10px] font-bold leading-none text-red-700 ring-2 ring-red-500">
-                      {unreadMessages > 99 ? "99+" : unreadMessages}
+                    <span className="absolute -right-3 -top-2 z-10 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[#E41E3F] px-1 text-[11px] font-bold leading-none text-white ring-2 ring-black">
+                      {unreadMessages > 9 ? "9+" : unreadMessages}
                     </span>
                   ) : null}
                 </span>

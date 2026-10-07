@@ -140,6 +140,29 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
   }, []);
 
   useEffect(() => {
+    if (!openComments || !getSupabaseEnv().isConfigured) return;
+    let stop = false;
+    const postId = openComments;
+    async function refreshComments() {
+      const comments = await loadComments(postId);
+      if (!stop) setCommentsByPost((current) => ({ ...current, [postId]: comments }));
+    }
+    const timer = window.setInterval(refreshComments, 6000);
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`comment-amens-${postId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "comment_likes" }, () => {
+        refreshComments();
+      })
+      .subscribe();
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+      supabase.removeChannel(channel);
+    };
+  }, [openComments]);
+
+  useEffect(() => {
     if (snapshot?.mode !== "live" || !getSupabaseEnv().isConfigured) return;
 
     const supabase = createClient();
@@ -198,8 +221,9 @@ export function FeedScreen({ initialTab = "feed" }: { initialTab?: "feed" | "pra
   }
 
   async function onToggleComments(postId: string) {
-    setOpenComments((current) => (current === postId ? null : postId));
-    if (commentsByPost[postId]) return;
+    const opening = openComments !== postId;
+    setOpenComments(opening ? postId : null);
+    if (!opening) return;
     const comments = await loadComments(postId);
     setCommentsByPost((current) => ({ ...current, [postId]: comments }));
   }

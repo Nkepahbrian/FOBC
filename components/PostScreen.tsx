@@ -20,6 +20,7 @@ import {
 } from "@/lib/feed/api";
 import type { FeedComment, FeedPost } from "@/lib/feed/types";
 import { createClient } from "@/lib/supabase/client";
+import { getSupabaseEnv } from "@/lib/supabase/env";
 
 export function PostScreen({ postId }: { postId: string }) {
   const router = useRouter();
@@ -65,6 +66,28 @@ export function PostScreen({ postId }: { postId: string }) {
     };
   }, [postId]);
 
+  useEffect(() => {
+    if (!commentsOpen || !getSupabaseEnv().isConfigured) return;
+    let stop = false;
+    async function refreshComments() {
+      const comments = await loadComments(postId);
+      if (!stop) setComments(comments);
+    }
+    const timer = window.setInterval(refreshComments, 6000);
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`comment-amens-${postId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "comment_likes" }, () => {
+        refreshComments();
+      })
+      .subscribe();
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+      supabase.removeChannel(channel);
+    };
+  }, [commentsOpen, postId]);
+
   async function onAmen(id: string) {
     if (!post || post.id !== id) return;
     const next = optimisticAmen(post);
@@ -82,8 +105,9 @@ export function PostScreen({ postId }: { postId: string }) {
   }
 
   async function onToggleComments(id: string) {
-    setCommentsOpen((open) => !open);
-    if (comments.length > 0) return;
+    const opening = !commentsOpen;
+    setCommentsOpen(opening);
+    if (!opening) return;
     setComments(await loadComments(id));
   }
 

@@ -50,6 +50,11 @@ function writeLocalFollows(userId: string, ids: Iterable<string>) {
   }
 }
 
+function announceAdelphoi(userId: string, followers: number) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("fobc-adelphoi", { detail: { userId, followers } }));
+}
+
 function publish(next: AdelphoiSnapshot) {
   snapshot = next;
   if (next.me) {
@@ -167,6 +172,11 @@ export async function toggleAdelphoi(
     if (!shouldFollow) {
       next.delete(targetId);
       publish({ me, ids: next, ready: true });
+      const shared = await supabase.rpc("unfollow_adelphos", { target_id: targetId });
+      if (!shared.error && typeof shared.data === "number") {
+        announceAdelphoi(targetId, shared.data);
+        return { status: "unfollowed", warning: null };
+      }
       const { error } = await supabase.from("follows").delete().eq("follower_id", me).eq("following_id", targetId);
       if (error) logFollowError("delete", error);
       return { status: "unfollowed", warning: null };
@@ -174,6 +184,16 @@ export async function toggleAdelphoi(
 
     next.add(targetId);
     publish({ me, ids: next, ready: true });
+    const shared = await supabase.rpc("follow_adelphos", { target_id: targetId });
+    if (!shared.error && typeof shared.data === "number") {
+      announceAdelphoi(targetId, shared.data);
+      try {
+        await notifyFollow(targetId);
+      } catch (notifyError) {
+        console.error("Follow saved, but the notification could not be sent:", notifyError);
+      }
+      return { status: "followed", warning: null };
+    }
     let { error } = await supabase.from("follows").upsert(
       { follower_id: me, following_id: targetId },
       { onConflict: "follower_id,following_id", ignoreDuplicates: true }

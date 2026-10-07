@@ -206,18 +206,28 @@ type RemoteNotification = {
 };
 
 function isFollowNotice(row: RemoteNotification) {
-  return row.type === "follow" || row.kind === "follow" || row.message === "started following you" || row.body === "started following you";
+  const text = `${row.message || ""} ${row.body || ""}`;
+  return row.type === "follow" || row.kind === "follow" || /following you/i.test(text);
+}
+
+function followSentence(row: RemoteNotification, actorName?: string) {
+  const stored = String(row.message || row.body || "").trim();
+  if (/is following you/i.test(stored)) return stored;
+  const name = actorName?.trim();
+  if (name && name !== "Adelphoi" && name !== "New Adelphos") return `Adelphos ${name} is following you`;
+  return "Adelphos is following you";
 }
 
 function ingestNotificationRow(row: RemoteNotification) {
   if (!row.id) return;
   const follow = isFollowNotice(row);
+  const sentence = followSentence(row);
   const kind = follow ? "follow" : kinds.has(row.kind as NotificationKind) ? (row.kind as NotificationKind) : "system";
   recordNotification({
     id: `db-${row.id}`,
     kind,
-    title: follow ? "New Adelphos" : String(row.title || "Adelphoi"),
-    body: follow ? "started following you" : String(row.message || row.body || ""),
+    title: follow ? sentence : String(row.title || "Adelphoi"),
+    body: follow ? sentence : String(row.message || row.body || ""),
     href: row.href || undefined,
     createdAt: row.created_at,
     is_read: asRead(row),
@@ -233,8 +243,19 @@ export async function notifyFollow(targetUserId: string) {
   const actorId = user?.id ?? null;
   if (!actorId || actorId === targetUserId) return;
 
-  const message = "started following you";
-  const title = "New Adelphos";
+  const recent = await supabase
+    .from("notifications")
+    .select("id")
+    .eq("recipient_id", targetUserId)
+    .eq("actor_id", actorId)
+    .gte("created_at", new Date(Date.now() - 120000).toISOString())
+    .limit(1);
+  if (!recent.error && (recent.data ?? []).length > 0) return;
+
+  const profile = await supabase.from("profiles").select("full_name").eq("id", actorId).maybeSingle();
+  const name = profile.data?.full_name?.trim() || "Someone";
+  const message = `Adelphos ${name} is following you`;
+  const title = message;
   const href = `/profile/${actorId}?from=notifications`;
   const attempts: Record<string, string | boolean>[] = [
     {
@@ -370,12 +391,14 @@ export async function syncNotifications(userId: string) {
       for (const row of stored.data ?? []) {
         const notice = row as RemoteNotification;
         const follow = isFollowNotice(notice);
+        const actorName = names.get(String(notice.actor_id)) || "";
+        const sentence = followSentence(notice, actorName);
         const kind = follow ? "follow" : kinds.has(notice.kind as NotificationKind) ? (notice.kind as NotificationKind) : "system";
         recordNotification({
           id: `db-${notice.id}`,
           kind,
-          title: follow ? "New Adelphos" : names.get(String(notice.actor_id)) || "Adelphoi",
-          body: follow ? "started following you" : String(notice.message || notice.body || ""),
+          title: follow ? sentence : actorName || "Adelphoi",
+          body: follow ? sentence : String(notice.message || notice.body || ""),
           href: notice.href || undefined,
           createdAt: notice.created_at,
           is_read: asRead(notice),
@@ -458,11 +481,13 @@ export async function syncNotifications(userId: string) {
       const names = await namesFor((follows.data ?? []).map((row) => String(row.follower_id)));
       for (const row of follows.data ?? []) {
         const actorId = String(row.follower_id);
+        const actorName = names.get(actorId) || "Someone";
+        const sentence = `Adelphos ${actorName} is following you`;
         recordNotification({
           id: `adelphoi-in-${actorId}`,
           kind: "follow",
-          title: "New Adelphos",
-          body: "started following you",
+          title: sentence,
+          body: sentence,
           href: `/profile/${actorId}?from=notifications`,
           createdAt: row.created_at,
         });
